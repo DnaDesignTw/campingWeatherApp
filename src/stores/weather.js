@@ -21,7 +21,7 @@ export const useWeatherStore = defineStore('weather', () => {
     locationCoordsMap.value = mapData;
     console.log('locationCoordsMap 已更新:', locationCoordsMap.value);
   }
-  
+
   // 簡易天氣代碼到圖標的映射 (Open-Meteo Weather Codes)
   const weatherCodeIcons = {
       0: '☀️', // Clear sky
@@ -81,33 +81,57 @@ export const useWeatherStore = defineStore('weather', () => {
     }
   }
   // 獲取多個地點的天氣 (當前溫度和天氣代碼)
+  // --- 新增：天氣快取（10分鐘內重複查詢直接回傳快取） ---
+  const weatherCache = {};
+  const CACHE_DURATION = 10 * 60 * 1000; // 10分鐘（毫秒）
+
   async function fetchMultipleLocationWeather(locations) {
     isLoadingWeather.value = true;
     const weatherData = {};
     const requests = [];
+    const now = Date.now();
 
     for (const locName in locations) {
       const { lat, lon } = locations[locName];
       if (lat && lon) {
-        requests.push(
-          apiClient.get(`forecast?latitude=${lat}&longitude=${lon}&hourly=temperature_2m,weather_code&current=temperature_2m,weather_code&timezone=Asia%2FTaipei&forecast_days=1`)
-            .then(response => {
-              const currentTemp = response.data.current?.temperature_2m;
-              const currentWeatherCode = response.data.current?.weather_code;
-              weatherData[locName] = {
-                temp: currentTemp !== undefined ? Math.round(currentTemp) : 'N/A',
-                weatherCode: currentWeatherCode,
-                icon: getIconForWeatherCode(currentWeatherCode)
-              };
-            })
-            .catch(error => {
-              console.error(`Failed to fetch weather for ${locName}:`, error);
-              weatherData[locName] = { temp: 'N/A', icon: '❓' };
-            })
-        );
+        // 檢查快取
+        if (
+          weatherCache[locName] &&
+          (now - weatherCache[locName].timestamp < CACHE_DURATION)
+        ) {
+          weatherData[locName] = weatherCache[locName].data;
+        } else {
+          requests.push(
+            apiClient
+              .get(
+                `forecast?latitude=${lat}&longitude=${lon}&hourly=temperature_2m,weather_code&current=temperature_2m,weather_code&timezone=Asia%2FTaipei&forecast_days=1`
+              )
+              .then((response) => {
+                const currentTemp = response.data.current?.temperature_2m;
+                const currentWeatherCode = response.data.current?.weather_code;
+                const result = {
+                  temp: currentTemp !== undefined ? Math.round(currentTemp) : 'N/A',
+                  weatherCode: currentWeatherCode,
+                  icon: getIconForWeatherCode(currentWeatherCode),
+                };
+                weatherData[locName] = result;
+                // 寫入快取
+                weatherCache[locName] = {
+                  data: result,
+                  timestamp: Date.now(),
+                };
+              })
+              .catch((error) => {
+                console.error(`Failed to fetch weather for ${locName}:`, error);
+                weatherData[locName] = { temp: 'N/A', icon: '❓' };
+              })
+          );
+        }
       }
     }
-    await Promise.all(requests);
+    if (requests.length > 0) {
+      await Promise.all(requests);
+    }
     isLoadingWeather.value = false;
     return weatherData;
   }

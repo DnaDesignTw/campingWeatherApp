@@ -65,7 +65,7 @@ let campgroundMarkersLayer = L.featureGroup(); // 用於管理露營地 Marker �
 let locationLabelsLayer = L.featureGroup(); // 用於管理縣市/鄉鎮標籤 Marker 的圖層群組
 
 // 預設地圖視圖
-const initialMapView = { center: [23.6, 120.96], zoom: 8 }; // 台灣中心點及初始縮放級別
+const initialMapView = { center: [23.7, 121], zoom: 8 }; // 台灣中心點及初始縮放級別
 
 // UI 狀態變數
 const isSearchOpen = ref(false);

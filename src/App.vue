@@ -89,13 +89,43 @@ const initMap = async () => {
     map.remove(); // 如果地圖已存在，先移除，防止重複初始化
   }
 
+
   // 創建地圖實例並設定初始視圖
   map = L.map('mapContainer').setView(initialMapView.center, initialMapView.zoom);
+
+  // 顯示定位按鈕，讓使用者自行選擇是否定位
+  const locateBtn = L.control({ position: 'topleft' });
+  locateBtn.onAdd = function () {
+    const btn = L.DomUtil.create('button', 'leaflet-bar leaflet-control leaflet-control-custom');
+    btn.innerHTML = '📍 我的定位';
+    btn.style.backgroundColor = 'white';
+    btn.style.width = '90px';
+    btn.style.height = '32px';
+    btn.style.cursor = 'pointer';
+    btn.onclick = function (e) {
+      e.stopPropagation();
+      map.locate({ setView: true, maxZoom: 12, enableHighAccuracy: true });
+    };
+    return btn;
+  };
+  locateBtn.addTo(map);
+
+  map.on('locationfound', (e) => {
+    userLocated = true;
+    L.marker(e.latlng).addTo(map).bindPopup('您目前的位置').openPopup();
+  });
+  map.on('locationerror', (e) => {
+    console.warn('定位失敗:', e.message);
+  });
 
   // 添加 OpenStreetMap 基礎圖層
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
   }).addTo(map);
+
+  map.on('zoomend', () => {
+    console.log('目前地圖縮放層級：', map.getZoom());
+  });
 
   // 將營地 Marker 和位置標籤圖層群組加入地圖
   campgroundMarkersLayer.addTo(map);
@@ -138,9 +168,7 @@ const initMap = async () => {
 
         // 綁定點擊、滑鼠移入/移出事件到 GeoJSON 圖層
         layer.on({
-          click: (e) => onLocationClick(countyName, countyCode, e.latlng, 'county', layer),
-          mouseover: (e) => highlightFeature(e),
-          mouseout: (e) => resetHighlight(e)
+          click: (e) => onLocationClick(countyName, countyCode, e.latlng, 'county', layer)
         });
       }
     }).addTo(map); // 將縣市 GeoJSON 圖層添加到地圖
@@ -188,25 +216,27 @@ async function updateLocationLabels() {
   const currentZoom = map.getZoom();
   locationLabelsLayer.clearLayers(); // 清除所有現有的標籤
 
-  let locationsToDisplay = []; // 準備要在地圖上顯示名稱的列表
-
+  let locationsToDisplay = [];
   // 根據縮放級別篩選要顯示的行政區類型 (縣市或鄉鎮)
-  if (currentZoom >= 10) { // 當縮放級別大於或等於 10 時顯示鄉鎮標籤
-    locationsToDisplay = Object.values(weatherStore.locationCoordsMap).filter(loc =>
-      loc.type === 'township'
-    );
-  } else { // 否則顯示縣市標籤
-    locationsToDisplay = Object.values(weatherStore.locationCoordsMap).filter(loc =>
-      loc.type === 'county'
-    );
+  if (currentZoom >= 10) {
+    locationsToDisplay = Object.values(weatherStore.locationCoordsMap).filter(loc => loc.type === 'township');
+  } else {
+    locationsToDisplay = Object.values(weatherStore.locationCoordsMap).filter(loc => loc.type === 'county');
   }
 
   // 進一步篩選：只顯示當前地圖視野內的地點，並準備查詢天氣
   const currentBounds = map.getBounds();
   const filteredLocationsForWeather = {};
   for (const loc of locationsToDisplay) {
-    if (loc && currentBounds.contains([loc.lat, loc.lon])) {
-      // 使用名稱作為 key 傳遞給天氣 API 查詢
+    // 檢查經緯度有效性
+    if (
+      loc &&
+      typeof loc.lat === 'number' &&
+      typeof loc.lon === 'number' &&
+      isFinite(loc.lat) &&
+      isFinite(loc.lon) &&
+      currentBounds.contains([loc.lat, loc.lon])
+    ) {
       filteredLocationsForWeather[loc.name] = loc;
     }
   }
@@ -217,27 +247,21 @@ async function updateLocationLabels() {
   // 繪製地點標籤 (Marker with custom HTML icon)
   for (const name in filteredLocationsForWeather) {
     const loc = filteredLocationsForWeather[name];
-    const weather = weatherResults[name]; // 從天氣結果中獲取該地點的天氣數據
-
-    // 構建 HTML 標籤內容 (包含名稱、天氣圖標、溫度)
+    const weather = weatherResults[name];
     const labelContent = `
-      <div class="bg-white p-1 rounded-md shadow-sm text-sm whitespace-nowrap flex items-center" style="pointer-events: auto; cursor: pointer;">
+      <div class="p-1 rounded-md text-sm whitespace-nowrap flex items-center" style="pointer-events: auto; cursor: pointer;">
         <span class="font-bold">${loc.name}</span>
         <span class="ml-1">${weather ? weather.icon : '❓'}</span>
         <span class="ml-1">${weather ? weather.temp : 'N/A'}°C</span>
       </div>
     `;
-
-    // 創建自定義的 DivIcon (HTML 圖標)
     const customIcon = L.divIcon({
-      className: 'custom-div-icon', // 可以在 CSS 中定義樣式
+      className: 'custom-div-icon',
       html: labelContent,
-      iconAnchor: [0, 0] // 圖標錨點 (左上角)
+      iconAnchor: [0, 0]
     });
-
-    // 創建 Marker 並添加到 locationLabelsLayer
     const marker = L.marker([loc.lat, loc.lon], { icon: customIcon });
-    marker.on('click', (e) => onLocationClick(loc.name, loc.code, e.latlng, loc.type, null)); // 點擊標籤也觸發 onLocationClick
+    marker.on('click', (e) => onLocationClick(loc.name, loc.code, e.latlng, loc.type, null));
     locationLabelsLayer.addLayer(marker);
   }
 }
@@ -363,25 +387,7 @@ const resetMapView = () => {
   map.setView(initialMapView.center, initialMapView.zoom);
 };
 
-// --- GeoJSON 縣市邊界互動樣式 ---
-const highlightFeature = (e) => {
-  const layer = e.target;
-  layer.setStyle({
-    weight: 3,
-    color: '#666',
-    dashArray: '',
-    fillOpacity: 0.9
-  });
-  if (!L.Browser.ie && !L.Browser.opera && !L.Browser.edge) {
-    layer.bringToFront(); // 將當前懸停的縣市邊界置於頂層
-  }
-};
-
-const resetHighlight = (e) => {
-  if (countyGeoJsonLayer) {
-    countyGeoJsonLayer.resetStyle(e.target); // 恢復 GeoJSON 圖層的預設樣式
-  }
-};
+// --- GeoJSON 縣市邊界互動樣式 (hover 效果已移除) ---
 
 // --- Vue 組件生命週期 ---
 onMounted(() => {
