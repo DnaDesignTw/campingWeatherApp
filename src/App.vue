@@ -6,7 +6,7 @@
       <button @click="resetMapView" class="btn-icon" title="回到預設視圖">🏠</button>
       <button @click="openSearch" class="btn-icon" title="搜尋">🔍</button>
       <button @click="showFavoritesList" class="btn-icon" title="我的最愛">❤️</button>
-      <button @click="campgroundsStore.toggleCampgroundMarkers" class="btn-icon" :class="{ 'bg-blue-200': campgroundsStore.showCampgroundMarkers }" title="顯示營地">⛺</button>
+      <button @click="campgroundsStore.toggleCampgroundMarkers" class="btn-icon" :class="{ 'bg-blue-200': campgroundsStore.showCampgroundMarkers }" title="營地">⛺</button>
     </div>
 
     <div v-if="isSearchOpen" class="absolute top-4 right-20 z-10 bg-white p-4 rounded shadow-md">
@@ -31,7 +31,13 @@
       載入資料中...
     </div>
   </div>
-
+  <button
+    v-if="showLoadMore && campgroundsStore.showCampgroundMarkers"
+    @click="loadAllMarkers"
+    class="fixed bottom-8 left-1/2 -translate-x-1/2 z-20 bg-blue-600 text-white px-6 py-2 rounded-full shadow-lg hover:bg-blue-700 transition-colors"
+  >
+    載入更多營地
+  </button>
   <div id="popup-template" class="hidden"></div>
 </template>
 
@@ -39,6 +45,7 @@
 import { ref, onMounted, onBeforeUnmount, watch } from 'vue';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css'; // 引入 Leaflet 樣式
+import '@fortawesome/fontawesome-free/css/all.min.css'; // 引入 Font Awesome 樣式
 import { useWeatherStore } from '@/stores/weather';
 import { useCampgroundsStore } from '@/stores/campgrounds';
 
@@ -61,11 +68,12 @@ const campgroundsStore = useCampgroundsStore();
 // 地圖相關變數
 let map = null; // Leaflet 地圖實例
 let countyGeoJsonLayer = null; // 儲存縣市 GeoJSON 圖層實例 (用於樣式重置)
+let townshipGeoJsonLayer = null; // 新增：儲存鄉鎮 GeoJSON 圖層實例
 let campgroundMarkersLayer = L.featureGroup(); // 用於管理露營地 Marker 的圖層群組
 let locationLabelsLayer = L.featureGroup(); // 用於管理縣市/鄉鎮標籤 Marker 的圖層群組
 
 // 預設地圖視圖
-const initialMapView = { center: [23.6, 120.96], zoom: 8 }; // 台灣中心點及初始縮放級別
+const initialMapView = { center: [24.76, 121.43], zoom: 10 }; // 台灣中心點及初始縮放級別
 
 // UI 狀態變數
 const isSearchOpen = ref(false);
@@ -83,12 +91,20 @@ const performSearch = () => {
   isSearchOpen.value = false; // 搜尋後關閉搜尋框
 };
 
+const markerLimit = ref(50); // 初始顯示 50 筆
+const showLoadMore = ref(false); // 是否顯示載入更多按鈕
+
+function loadAllMarkers() {
+  markerLimit.value = Infinity;
+  showLoadMore.value = false;
+  updateCampgroundMarkers(true);
+}
+
 // --- 地圖初始化 ---
 const initMap = async () => {
   if (map) {
     map.remove(); // 如果地圖已存在，先移除，防止重複初始化
   }
-
 
   // 創建地圖實例並設定初始視圖
   map = L.map('mapContainer').setView(initialMapView.center, initialMapView.zoom);
@@ -111,7 +127,7 @@ const initMap = async () => {
   locateBtn.addTo(map);
 
   map.on('locationfound', (e) => {
-    userLocated = true;
+    // userLocated = true; // 這裡沒有定義 userLocated，如果需要，請在外面宣告
     L.marker(e.latlng).addTo(map).bindPopup('您目前的位置').openPopup();
   });
   map.on('locationerror', (e) => {
@@ -122,10 +138,6 @@ const initMap = async () => {
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
   }).addTo(map);
-
-  map.on('zoomend', () => {
-    console.log('目前地圖縮放層級：', map.getZoom());
-  });
 
   // 將營地 Marker 和位置標籤圖層群組加入地圖
   campgroundMarkersLayer.addTo(map);
@@ -146,11 +158,11 @@ const initMap = async () => {
     countyGeoJsonLayer = L.geoJSON(countyData, {
       style: (feature) => ({ // 縣市邊界預設樣式
         fillColor: '#ADD8E6', // 淺藍色填充
-        weight: 1,
-        opacity: 1,
+        weight: 0,
+        opacity: 0,
         color: 'white', // 白色邊框
         dashArray: '3',
-        fillOpacity: 0.7
+        fillOpacity: 0.6
       }),
       onEachFeature: (feature, layer) => {
         const countyName = feature.properties.COUNTYNAME; // 假設 GeoJSON 中縣市名稱屬性為 COUNTYNAME
@@ -171,12 +183,20 @@ const initMap = async () => {
           click: (e) => onLocationClick(countyName, countyCode, e.latlng, 'county', layer)
         });
       }
-    }).addTo(map); // 將縣市 GeoJSON 圖層添加到地圖
+    }); // 不加 .addTo(map) 這裡，由 updateBoundaryLayers 管理
   }
 
-  // 5. 處理鄉鎮 GeoJSON：計算中心點 (不將其添加到地圖，只解析數據)
+  // 5. 處理鄉鎮 GeoJSON：計算中心點並建立圖層 (不立即添加到地圖)
   if (townshipData) {
-    L.geoJSON(townshipData, {
+    townshipGeoJsonLayer = L.geoJSON(townshipData, { // Assign to the new layer variable
+      style: (feature) => ({ // 鄉鎮邊界預設樣式
+        fillColor: '#ADD8E6', // 淺藍色填充
+        weight: 1,
+        opacity: 0.8,
+        color: 'gray', // 白色邊框
+        dashArray: '5',
+        fillOpacity: 0.6
+      }),
       onEachFeature: (feature, layer) => {
         const townshipName = feature.properties.TOWNNAME; // 假設鄉鎮名稱屬性
         const countyName = feature.properties.COUNTYNAME; // 假設所屬縣市名稱
@@ -185,40 +205,98 @@ const initMap = async () => {
         const center = layer.getBounds().getCenter();
         processedLocationCoords[townshipName] = {
           lat: center.lat,
-          lon: center.lon,
+          lon: center.lng, 
           type: 'township',
           name: townshipName,
-          county: countyName, // 記錄所屬縣市
+          county: countyName,
           code: townshipCode
         };
+
+        // 綁定點擊事件到鄉鎮 GeoJSON 圖層
+        layer.on({
+          click: (e) => onLocationClick(townshipName, townshipCode, e.latlng, 'township', layer)
+        });
       }
-    });
+    }); // 不加 .addTo(map) 這裡，由 updateBoundaryLayers 管理
   }
 
   // 6. 將計算好的所有行政區中心點映射表更新到 Pinia Store
   weatherStore.setLocationCoordsMap(processedLocationCoords);
 
-  // 7. 監聽地圖縮放和移動事件，動態更新縣市/鄉鎮標籤
-  map.on('zoomend', updateLocationLabels);
-  map.on('moveend', updateLocationLabels);
+  // 7. 監聽地圖縮放和移動事件，動態更新縣市/鄉鎮標籤和邊界
+  map.on('zoomend', () => {
+    updateLocationLabels(); // 更新標籤
+    updateBoundaryLayers(); // 更新邊界圖層
+  });
+  map.on('moveend', updateLocationLabels); // 只更新標籤，邊界圖層只在縮放時改變
 
   // 8. 監聽營地 Marker 顯示狀態，並更新地圖上的 Marker
   watch(() => campgroundsStore.showCampgroundMarkers, (newValue) => {
+    markerLimit.value = 50;
     updateCampgroundMarkers(newValue);
   });
+  map.on('moveend', () => {
+    if (campgroundsStore.showCampgroundMarkers) {
+      markerLimit.value = 50;
+      updateCampgroundMarkers(true);
+    }
+  });
+  map.on('zoomend', () => {
+    if (campgroundsStore.showCampgroundMarkers) {
+      markerLimit.value = 50;
+      updateCampgroundMarkers(true);
+    }
+  });
 
-  // 9. 初始顯示地圖標籤 (縣市或鄉鎮)
+  // 9. 初始顯示地圖標籤和邊界 (縣市或鄉鎮)
   await updateLocationLabels();
+  await updateBoundaryLayers(); // Call this initially
 };
 
-// --- 更新地圖上的縣市/鄉鎮標籤 ---
+// --- 更新地圖上的縣市/鄉鎮邊界圖層 ---
+async function updateBoundaryLayers() {
+  const currentZoom = map.getZoom();
+
+  if (currentZoom >= 13) {
+    // 移除所有行政區邊界圖層
+    if (countyGeoJsonLayer && map.hasLayer(countyGeoJsonLayer)) {
+      map.removeLayer(countyGeoJsonLayer);
+    }
+    if (townshipGeoJsonLayer && map.hasLayer(townshipGeoJsonLayer)) {
+      map.removeLayer(townshipGeoJsonLayer);
+    }
+  } else if (currentZoom >= 12) {
+    // 顯示鄉鎮邊界
+    if (countyGeoJsonLayer && map.hasLayer(countyGeoJsonLayer)) {
+      map.removeLayer(countyGeoJsonLayer); // 移除縣市圖層
+    }
+    if (townshipGeoJsonLayer && !map.hasLayer(townshipGeoJsonLayer)) {
+      map.addLayer(townshipGeoJsonLayer); // 添加鄉鎮圖層
+    }
+  } else {
+    // 顯示縣市邊界
+    if (townshipGeoJsonLayer && map.hasLayer(townshipGeoJsonLayer)) {
+      map.removeLayer(townshipGeoJsonLayer); // 移除鄉鎮圖層
+    }
+    if (countyGeoJsonLayer && !map.hasLayer(countyGeoJsonLayer)) {
+      map.addLayer(countyGeoJsonLayer); // 添加縣市圖層
+    }
+  }
+}
+
+
+// --- 更新地圖上的縣市/鄉鎮標籤 (此函式邏輯不變，因為它已經根據 zoom 篩選了 loc.type) ---
 async function updateLocationLabels() {
   const currentZoom = map.getZoom();
+  console.log('目前地圖縮放層級：', currentZoom);
   locationLabelsLayer.clearLayers(); // 清除所有現有的標籤
 
   let locationsToDisplay = [];
   // 根據縮放級別篩選要顯示的行政區類型 (縣市或鄉鎮)
-  if (currentZoom >= 10) {
+  if (currentZoom >= 13) {
+    //當縮放層級大於等於 13 時，不顯示任何行政區標籤
+    locationsToDisplay = [];
+  }else if (currentZoom >= 12) {
     locationsToDisplay = Object.values(weatherStore.locationCoordsMap).filter(loc => loc.type === 'township');
   } else {
     locationsToDisplay = Object.values(weatherStore.locationCoordsMap).filter(loc => loc.type === 'county');
@@ -275,7 +353,7 @@ async function onLocationClick(name, code, latlng, type, layer) {
 
   // 2. 顯示 Leaflet Popup
   const popupContent = generatePopupContent(name, latlng, type, code); // 傳遞 code 以便識別營地
-  const popup = L.popup({ minWidth: 250, maxWidth: 300 })
+  const popup = L.popup({ minWidth: 250, maxWidth: 300, offset: [0, -30] })
     .setLatLng(latlng)
     .setContent(popupContent)
     .openOn(map);
@@ -301,12 +379,10 @@ async function onLocationClick(name, code, latlng, type, layer) {
     }
   });
 
-  // 4. 如果是點擊 GeoJSON 多邊形，則縮放地圖到該區域邊界
+  // 4. 只針對區域（多邊形）點擊才平移地圖，marker 點擊不平移
   if (layer && type !== 'campground') {
-    map.fitBounds(layer.getBounds(), { padding: [50, 50] }); // 增加 padding 讓邊界更清晰
-  } else {
-    // 如果是 Marker 或標籤點擊，稍微平移地圖確保 Popup 可見
-    map.flyTo(latlng, Math.max(map.getZoom(), 12)); // 如果縮放級別過小，至少放大到 12
+    const center = layer.getBounds().getCenter();
+    map.panTo(center, { animate: true });
   }
 }
 
@@ -338,8 +414,8 @@ function generatePopupContent(name, latlng, type, id) {
   // 根據類型決定「加入我的最愛」按鈕的顯示狀態
   const favoriteButtonHtml = type === 'campground' ?
     `<div class="mt-4 text-center">
-       <button id="add-to-favorite-btn" class="text-red-500 text-2xl hover:scale-110 transition-transform" title="加入我的最愛">❤️</button>
-     </div>` : ''; // 非營地不顯示收藏按鈕
+        <button id="add-to-favorite-btn" class="text-red-500 text-2xl hover:scale-110 transition-transform" title="加入我的最愛">❤️</button>
+      </div>` : ''; // 非營地不顯示收藏按鈕
 
   return `
     <h3 class="font-bold text-lg mb-2">${name}</h3>
@@ -351,34 +427,44 @@ function generatePopupContent(name, latlng, type, id) {
 
 // --- 營地 Marker 相關功能 ---
 function updateCampgroundMarkers(show) {
-  campgroundMarkersLayer.clearLayers(); // 清除現有所有營地 Marker
+  campgroundMarkersLayer.clearLayers();
   if (show) {
-    const visibleCampgrounds = campgroundsStore.campgrounds.filter(camp => {
-        // 可以增加篩選條件，例如只顯示視野內的營地
-        return map.getBounds().contains([camp.latitude, camp.longitude]);
-    });
+    const zoom = map.getZoom();
+    let visibleCampgrounds = [];
+    if (zoom >= 13) {
+      // zoom >= 13 顯示視野內全部
+      visibleCampgrounds = campgroundsStore.campgrounds.filter(camp =>
+        map.getBounds().contains([camp.latitude, camp.longitude])
+      );
+    } else {
+      // 依鄉鎮分組，視野內每個鄉鎮只取前 5 個營地
+      const visibleCampsByTown = {};
+      campgroundsStore.campgrounds.forEach(camp => {
+        if (!map.getBounds().contains([camp.latitude, camp.longitude])) return;
+        const town = camp.town || camp.township || camp.townName || camp.town_name || '未知鄉鎮';
+        if (!visibleCampsByTown[town]) visibleCampsByTown[town] = [];
+        if (visibleCampsByTown[town].length < 5) {
+          visibleCampsByTown[town].push(camp);
+        }
+      });
+      visibleCampgrounds = Object.values(visibleCampsByTown).flat();
+    }
+    showLoadMore.value = false;
 
     visibleCampgrounds.forEach(camp => {
       if (camp.latitude && camp.longitude) {
-        const marker = L.marker([camp.latitude, camp.longitude], {
-          // 可以自定義營地 Marker 圖標
-          // icon: L.icon({
-          //   iconUrl: '/icons/camp-icon.png', // 你需要準備這個圖標
-          //   iconSize: [32, 32],
-          //   iconAnchor: [16, 32]
-          // })
+        const campIcon = L.divIcon({
+          className: 'gmap-marker',
+          html: '<span class="gmap-marker-bg"><i class="fa-solid fa-campground"></i></span>',
+          iconSize: [30, 30],
+          iconAnchor: [15, 30]
         });
+        const marker = L.marker([camp.latitude, camp.longitude], { icon: campIcon });
         marker.on('click', (e) => onLocationClick(camp.name, camp.id, e.latlng, 'campground', null));
-        marker.bindTooltip(camp.name, {permanent: false, direction: 'top'}); // 滑鼠移入顯示名稱
+        marker.bindTooltip(camp.name, { permanent: false, direction: 'top' });
         campgroundMarkersLayer.addLayer(marker);
       }
     });
-
-    // 如果顯示營地，且有營地在範圍內，嘗試縮放至所有可見營地
-    if (visibleCampgrounds.length > 0) {
-        const bounds = L.latLngBounds(visibleCampgrounds.map(c => [c.latitude, c.longitude]));
-        map.fitBounds(bounds, { padding: [50, 50], maxZoom: 14 }); // 限制最大縮放級別
-    }
   }
 }
 
@@ -415,9 +501,15 @@ onBeforeUnmount(() => {
 }
 
 /* 自定義 DivIcon 的樣式，讓它能被點擊 (使用 :deep() 穿透到 Leaflet 生成的 DOM) */
-:deep(.custom-div-icon) {
+:deep(.custom-div-icon),
+:deep(.fa-marker-icon) {
   pointer-events: auto; /* 確保 div 可以被點擊 */
   cursor: pointer;
+  background: none;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 /* 可以為 Popup 添加一些自定義樣式 */
