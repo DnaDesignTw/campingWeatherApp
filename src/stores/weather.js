@@ -150,6 +150,62 @@ export const useWeatherStore = defineStore('weather', () => {
     }
   }
 
+  // --- 我的最愛營地天氣快取（一天有效） ---
+  const favoriteCampgroundWeather = ref({}); // { [campId]: { weather, timestamp } }
+  const FAVORITE_CACHE_DURATION = 24 * 60 * 60 * 1000; // 1天（毫秒）
+
+  /**
+   * 查詢多個營地天氣，只查詢新加入或快取過期的營地
+   * @param {Array} campgrounds [{ id, name, latitude, longitude }]
+   * @returns {Object} { [campId]: weatherData }
+   */
+  async function fetchFavoriteCampgroundsWeather(campgrounds) {
+    isLoadingWeather.value = true;
+    const now = Date.now();
+    const requests = [];
+    const result = {};
+
+    for (const camp of campgrounds) {
+      if (!camp.id || !camp.latitude || !camp.longitude) continue;
+      const cache = favoriteCampgroundWeather.value[camp.id];
+      if (cache && (now - cache.timestamp < FAVORITE_CACHE_DURATION)) {
+        // 使用快取
+        result[camp.id] = cache.weather;
+      } else {
+        // 需查詢
+        requests.push(
+          apiClient
+            .get(`forecast?latitude=${camp.latitude}&longitude=${camp.longitude}&daily=temperature_2m_max,temperature_2m_min,weather_code&timezone=Asia%2FTaipei&forecast_days=7`)
+            .then((response) => {
+              const daily = response.data.daily;
+              // 格式化一週天氣
+              const weatherArr = daily.time.map((t, i) => ({
+                date: new Date(t).toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric', weekday: 'short' }),
+                min: Math.round(daily.temperature_2m_min[i]),
+                max: Math.round(daily.temperature_2m_max[i]),
+                icon: getIconForWeatherCode(daily.weather_code[i])
+              }));
+              result[camp.id] = weatherArr;
+              // 寫入快取
+              favoriteCampgroundWeather.value[camp.id] = {
+                weather: weatherArr,
+                timestamp: Date.now(),
+              };
+            })
+            .catch((error) => {
+              console.error(`Failed to fetch weather for favorite camp ${camp.name}:`, error);
+              result[camp.id] = [];
+            })
+        );
+      }
+    }
+    if (requests.length > 0) {
+      await Promise.all(requests);
+    }
+    isLoadingWeather.value = false;
+    return result;
+  }
+
   return {
     countyWeather,
     townshipWeather,
@@ -163,5 +219,8 @@ export const useWeatherStore = defineStore('weather', () => {
     loadTaiwanGeoJsonData, // 暴露載入 GeoJSON 的 action
     fetchMultipleLocationWeather,
     fetchOneWeekForecast,
+    // 我的最愛專用
+    favoriteCampgroundWeather,
+    fetchFavoriteCampgroundsWeather,
   };
 });

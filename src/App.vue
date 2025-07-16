@@ -15,16 +15,27 @@
       <button @click="isSearchOpen = false" class="ml-2 px-2 py-1 bg-gray-300 rounded">X</button>
     </div>
 
-    <div v-if="isFavoritesListOpen" class="absolute top-4 left-4 z-10 bg-white p-4 rounded shadow-md w-80">
+    <div v-if="isFavoritesListOpen" class="absolute top-4 left-4 z-10 bg-white p-4 rounded shadow-md w-96">
       <h2 class="text-xl font-bold mb-2">我的最愛營地</h2>
-      <ul class="max-h-64 overflow-y-auto">
-        <li v-for="camp in campgroundsStore.favoriteCampgrounds" :key="camp.id" class="flex justify-between items-center py-1 border-b last:border-b-0">
-          {{ camp.name }}
-          <button @click="campgroundsStore.removeFavorite(camp.id)" class="text-red-500 ml-2">移除</button>
+      <ul class="max-h-96 overflow-y-auto">
+        <li v-for="camp in campgroundsStore.favoriteCampgrounds" :key="camp.id" class="py-2 border-b last:border-b-0">
+          <div class="flex justify-between items-center">
+            <span class="font-semibold">{{ camp.name }}</span>
+            <button @click="campgroundsStore.removeFavorite(camp.id)" class="text-red-500 ml-2">移除</button>
+          </div>
+          <div v-if="weatherStore.favoriteCampgroundWeather[camp.id] && weatherStore.favoriteCampgroundWeather[camp.id].weather && weatherStore.favoriteCampgroundWeather[camp.id].weather.length" class="text-xs text-gray-700 mt-1">
+            <div v-for="(day, idx) in weatherStore.favoriteCampgroundWeather[camp.id].weather" :key="idx" class="flex justify-between items-center">
+              <span>{{ day.date }}</span>
+              <span>{{ day.icon }}</span>
+              <span>{{ day.min }}°C / {{ day.max }}°C</span>
+            </div>
+          </div>
+          <div v-else class="text-xs text-gray-400 mt-1">載入天氣中...</div>
         </li>
       </ul>
       <p v-if="campgroundsStore.favoriteCampgrounds.length === 0" class="text-gray-500">尚未加入任何最愛營地。</p>
       <button @click="isFavoritesListOpen = false" class="mt-4 px-4 py-2 bg-gray-300 rounded">關閉</button>
+
     </div>
 
     <div v-if="weatherStore.isLoadingWeather" class="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 bg-black text-white px-4 py-2 rounded-full shadow-lg">
@@ -83,6 +94,15 @@ const isFavoritesListOpen = ref(false);
 // UI 狀態切換函數
 const openSearch = () => { isSearchOpen.value = !isSearchOpen.value; };
 const showFavoritesList = () => { isFavoritesListOpen.value = !isFavoritesListOpen.value; };
+
+// 我的最愛天氣快取與自動查詢
+import { nextTick } from 'vue';
+watch(isFavoritesListOpen, async (open) => {
+  if (open) {
+    await nextTick();
+    await weatherStore.fetchFavoriteCampgroundsWeather(campgroundsStore.favoriteCampgrounds);
+  }
+});
 
 // 搜尋功能 (待實作詳細邏輯)
 const performSearch = () => {
@@ -351,33 +371,32 @@ async function onLocationClick(name, code, latlng, type, layer) {
   // 1. 獲取並顯示該地點的一週天氣預報
   await weatherStore.fetchOneWeekForecast(latlng.lat, latlng.lng);
 
+
   // 2. 顯示 Leaflet Popup
-  const popupContent = generatePopupContent(name, latlng, type, code); // 傳遞 code 以便識別營地
+  const popupContent = generatePopupContent(name, latlng, type, code);
   const popup = L.popup({ minWidth: 250, maxWidth: 300, offset: [0, -30] })
     .setLatLng(latlng)
     .setContent(popupContent)
     .openOn(map);
 
-  // 3. Popup 開啟後，為「加入我的最愛」按鈕綁定事件
-  popup.on('popupopen', () => {
+  // 3. Popup 開啟後，為「加入我的最愛」按鈕綁定事件（直接 setTimeout，確保 DOM 已插入）
+  setTimeout(() => {
     const addToFavoriteBtn = document.getElementById('add-to-favorite-btn');
     if (addToFavoriteBtn) {
       addToFavoriteBtn.onclick = () => {
         if (type === 'campground') {
-          // 在 campgroundsStore 中查找該營地資訊
-          const camp = campgroundsStore.campgrounds.find(c => c.id === code);
+          const camp = campgroundsStore.campgrounds.find(c => String(c.id) === String(code));
           if (camp) {
             campgroundsStore.addFavorite(camp);
             alert(`${camp.name} 已加入我的最愛！`);
           }
         } else {
-          // 如果點擊的是縣市或鄉鎮，但還沒有收藏行政區的功能
           alert(`${name} (${type === 'county' ? '縣市' : '鄉鎮'}) 暫時無法直接收藏，請點擊營地！`);
         }
-        popup.close(); // 點擊後關閉 Popup
+        popup.close();
       };
     }
-  });
+  }, 100);
 
   // 4. 只針對區域（多邊形）點擊才平移地圖，marker 點擊不平移
   if (layer && type !== 'campground') {
