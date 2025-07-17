@@ -13,6 +13,16 @@
       <input type="text" v-model="searchQuery" placeholder="搜尋縣市、鄉鎮或營地..." class="border p-2 rounded w-64" @keyup.enter="performSearch">
       <button @click="performSearch" class="ml-2 px-4 py-2 bg-blue-500 text-white rounded">搜尋</button>
       <button @click="isSearchOpen = false" class="ml-2 px-2 py-1 bg-gray-300 rounded">X</button>
+      <div v-if="searchQuery && searchResults.length === 0" class="mt-2 text-gray-500">查無符合結果</div>
+      <ul v-if="searchResults.length > 0" class="mt-2 max-h-64 overflow-y-auto border rounded bg-white shadow">
+        <li v-for="item in searchResults" :key="item.type + '-' + item.name + '-' + (item.id || '')" class="px-2 py-1 hover:bg-blue-100 cursor-pointer flex items-center"
+            @click="() => { performSearchByItem(item); }">
+          <span class="font-bold mr-2">{{ item.name }}</span>
+          <span v-if="item.type === 'county'" class="text-xs text-gray-600">縣市</span>
+          <span v-else-if="item.type === 'township'" class="text-xs text-gray-600">鄉鎮</span>
+          <span v-else class="text-xs text-green-600">營地</span>
+        </li>
+      </ul>
     </div>
 
     <div v-if="isFavoritesListOpen" class="absolute top-4 left-4 z-10 bg-white p-4 rounded shadow-md w-96">
@@ -50,6 +60,23 @@
     載入更多營地
   </button>
   <div id="popup-template" class="hidden"></div>
+
+  <!-- 底部滿版 Popup -->
+  <transition name="slide-fade">
+    <div v-if="isBottomPopupOpen" class="fixed inset-0 z-30 flex items-end justify-center p-4 pointer-events-none">
+      <div class="w-full max-w-md p-6 bg-white rounded-t-lg shadow-lg pointer-events-auto">
+        <div class="flex justify-between items-center">
+          <h3 class="text-lg font-bold">地點資訊</h3>
+          <button @click="closeBottomPopup" class="text-gray-500 hover:text-gray-700">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        <div class="mt-4" v-html="bottomPopupContent"></div>
+      </div>
+    </div>
+  </transition>
 </template>
 
 <script setup>
@@ -90,6 +117,8 @@ const initialMapView = { center: [24.76, 121.43], zoom: 10 }; // 台灣中心點
 const isSearchOpen = ref(false);
 const searchQuery = ref('');
 const isFavoritesListOpen = ref(false);
+const isBottomPopupOpen = ref(false);
+const bottomPopupContent = ref('');
 
 // UI 狀態切換函數
 const openSearch = () => { isSearchOpen.value = !isSearchOpen.value; };
@@ -104,12 +133,56 @@ watch(isFavoritesListOpen, async (open) => {
   }
 });
 
-// 搜尋功能 (待實作詳細邏輯)
+// 即時搜尋結果
+const searchResults = ref([]);
+
+watch(searchQuery, (newQuery) => {
+  if (!newQuery) {
+    searchResults.value = [];
+    return;
+  }
+  const keyword = newQuery.trim();
+  if (!keyword) {
+    searchResults.value = [];
+    return;
+  }
+  // 搜尋縣市、鄉鎮、營地
+  const counties = Object.values(weatherStore.locationCoordsMap).filter(loc => loc.type === 'county' && loc.name.includes(keyword));
+  const townships = Object.values(weatherStore.locationCoordsMap).filter(loc => loc.type === 'township' && loc.name.includes(keyword));
+  const campgrounds = campgroundsStore.campgrounds.filter(camp => camp.name && camp.name.includes(keyword));
+  searchResults.value = [
+    ...counties.map(loc => ({ type: 'county', name: loc.name, lat: loc.lat, lon: loc.lon })),
+    ...townships.map(loc => ({ type: 'township', name: loc.name, lat: loc.lat, lon: loc.lon })),
+    ...campgrounds.map(camp => ({ type: 'campground', name: camp.name, lat: camp.latitude, lon: camp.longitude, id: camp.id }))
+  ];
+});
+
+// 搜尋功能 (即時顯示結果，按下搜尋則導航到第一個結果)
 const performSearch = () => {
-  console.log('執行搜尋:', searchQuery.value);
-  // TODO: 根據 searchQuery 過濾縣市/鄉鎮/營地，並導航到對應位置
-  isSearchOpen.value = false; // 搜尋後關閉搜尋框
+  if (searchResults.value.length > 0) {
+    const first = searchResults.value[0];
+    if (first.type === 'campground') {
+      map.setView([first.lat, first.lon], 15);
+      onLocationClick(first.name, first.id, { lat: first.lat, lng: first.lon }, 'campground', null);
+    } else {
+      map.setView([first.lat, first.lon], 12);
+      onLocationClick(first.name, first.name, { lat: first.lat, lng: first.lon }, first.type, null);
+    }
+    isSearchOpen.value = false;
+  }
 };
+
+// 新增：搜尋結果點擊導航
+function performSearchByItem(item) {
+  if (item.type === 'campground') {
+    map.setView([item.lat, item.lon], 15);
+    onLocationClick(item.name, item.id, { lat: item.lat, lng: item.lon }, 'campground', null);
+  } else {
+    map.setView([item.lat, item.lon], 12);
+    onLocationClick(item.name, item.name, { lat: item.lat, lng: item.lon }, item.type, null);
+  }
+  isSearchOpen.value = false;
+}
 
 const markerLimit = ref(50); // 初始顯示 50 筆
 const showLoadMore = ref(false); // 是否顯示載入更多按鈕
@@ -464,6 +537,7 @@ function updateCampgroundMarkers(show) {
         if (!visibleCampsByTown[town]) visibleCampsByTown[town] = [];
         if (visibleCampsByTown[town].length < 5) {
           visibleCampsByTown[town].push(camp);
+          visibleCampgrounds.push(camp);
         }
       });
       visibleCampgrounds = Object.values(visibleCampsByTown).flat();
@@ -492,16 +566,17 @@ const resetMapView = () => {
   map.setView(initialMapView.center, initialMapView.zoom);
 };
 
-// --- GeoJSON 縣市邊界互動樣式 (hover 效果已移除) ---
-
-// --- Vue 組件生命週期 ---
+// 初始化地圖
 onMounted(() => {
-  initMap(); // 組件掛載後初始化地圖
+  initMap();
 });
 
+// 組件卸載前清理
 onBeforeUnmount(() => {
   if (map) {
-    map.remove(); // 組件卸載前清除地圖實例，防止記憶體洩漏
+    map.off();
+    map.remove();
+    map = null;
   }
 });
 </script>
@@ -529,7 +604,8 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-}
+  }
+
 
 /* 可以為 Popup 添加一些自定義樣式 */
 :deep(.leaflet-popup-content-wrapper) {
@@ -538,5 +614,32 @@ onBeforeUnmount(() => {
 }
 :deep(.leaflet-popup-content) {
   margin: 0;
+}
+
+/* 滑動淡入過渡效果 */
+.slide-fade-enter-active, .slide-fade-leave-active {
+  transition: opacity 0.5s, transform 0.5s;
+}
+.slide-fade-enter, .slide-fade-leave-to /* .slide-fade-leave-active 在舊版 Vue 中使用 */ {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+/* 底部滿版 Popup 樣式 */
+.windy-bottom-popup {
+  @apply fixed inset-0 z-30 flex items-end justify-center p-4 pointer-events-none;
+}
+.windy-bottom-popup-inner {
+  @apply w-full max-w-md p-6 bg-white rounded-t-lg shadow-lg pointer-events-auto;
+}
+.windy-bottom-popup-close {
+  @apply text-gray-500 hover:text-gray-700;
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1.25rem;
 }
 </style>

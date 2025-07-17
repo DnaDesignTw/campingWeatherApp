@@ -149,7 +149,7 @@ export const useWeatherStore = defineStore('weather', () => {
       isLoadingWeather.value = false;
     }
   }
-
+  
   // --- 我的最愛營地天氣快取（一天有效） ---
   const favoriteCampgroundWeather = ref({}); // { [campId]: { weather, timestamp } }
   const FAVORITE_CACHE_DURATION = 24 * 60 * 60 * 1000; // 1天（毫秒）
