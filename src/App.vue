@@ -25,27 +25,31 @@
       </ul>
     </div>
 
-    <div v-if="isFavoritesListOpen" class="absolute top-4 left-4 z-10 bg-white p-4 rounded shadow-md w-96">
-      <h2 class="text-xl font-bold mb-2">我的最愛營地</h2>
-      <ul class="max-h-96 overflow-y-auto">
-        <li v-for="camp in campgroundsStore.favoriteCampgrounds" :key="camp.id" class="py-2 border-b last:border-b-0">
-          <div class="flex justify-between items-center">
-            <span class="font-semibold">{{ camp.name }}</span>
-            <button @click="campgroundsStore.removeFavorite(camp.id)" class="text-red-500 ml-2">移除</button>
+    <div v-if="isFavoritesListOpen" class="absolute top-4 left-4 z-10 bg-white p-4 rounded shadow-md w-[480px]">
+      <h2 class="text-xl font-bold mb-4">我的最愛營地</h2>
+      <div class="flex flex-wrap gap-4 max-h-96 overflow-y-auto">
+        <div v-for="camp in campgroundsStore.favoriteCampgrounds" :key="camp.id" class="favorite-card bg-blue-50 rounded-lg shadow p-4 flex flex-col">
+          <div class="flex justify-between items-center mb-2">
+            <span class="font-semibold text-base">{{ camp.name }}</span>
+            <button @click="campgroundsStore.removeFavorite(camp.id)" class="text-red-500 ml-2 text-sm">移除</button>
           </div>
-          <div v-if="weatherStore.favoriteCampgroundWeather[camp.id] && weatherStore.favoriteCampgroundWeather[camp.id].weather && weatherStore.favoriteCampgroundWeather[camp.id].weather.length" class="text-xs text-gray-700 mt-1">
-            <div v-for="(day, idx) in weatherStore.favoriteCampgroundWeather[camp.id].weather" :key="idx" class="flex justify-between items-center">
-              <span>{{ day.date }}</span>
-              <span>{{ day.icon }}</span>
-              <span>{{ day.min }}°C / {{ day.max }}°C</span>
+          <div v-if="weatherStore.favoriteCampgroundWeather[camp.id] && Object.keys(weatherStore.favoriteCampgroundWeather[camp.id].weather || {}).length > 0">
+            <div class="favorite-week-scroll">
+              <div v-for="(hours, day) in weatherStore.favoriteCampgroundWeather[camp.id].weather" :key="day" class="favorite-week-card bg-white rounded-lg shadow-sm px-3 py-3 mr-3 flex flex-col items-center min-w-[120px]">
+                <span class="font-bold text-blue-700 mb-1">{{ day }}</span>
+                <span class="text-3xl mb-1">{{ hours[0].icon }}</span>
+                <span class="text-base mb-1">
+                  <span class="text-red-600">{{ Math.max(...hours.map(h => h.temp)) }}°C</span> / <span class="text-blue-600">{{ Math.min(...hours.map(h => h.temp)) }}°C</span>
+                </span>
+                <span class="text-blue-500 text-xs mb-1">{{ hours.reduce((sum, h) => sum + h.rain, 0).toFixed(1) }} mm</span>
+              </div>
             </div>
           </div>
-          <div v-else class="text-xs text-gray-400 mt-1">載入天氣中...</div>
-        </li>
-      </ul>
-      <p v-if="campgroundsStore.favoriteCampgrounds.length === 0" class="text-gray-500">尚未加入任何最愛營地。</p>
+          <div v-else class="text-xs text-gray-400 mt-2">載入天氣中...</div>
+        </div>
+      </div>
+      <p v-if="campgroundsStore.favoriteCampgrounds.length === 0" class="text-gray-500 mt-2">尚未加入任何最愛營地。</p>
       <button @click="isFavoritesListOpen = false" class="mt-4 px-4 py-2 bg-gray-300 rounded">關閉</button>
-
     </div>
 
     <div v-if="weatherStore.isLoadingWeather" class="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 bg-black text-white px-4 py-2 rounded-full shadow-lg">
@@ -442,7 +446,7 @@ async function onLocationClick(name, code, latlng, type, layer) {
   console.log(`點擊了 ${type}:`, name, `代碼/ID: ${code}`);
 
   // 1. 獲取並顯示該地點的一週天氣預報
-  await weatherStore.fetchOneWeekForecast(latlng.lat, latlng.lng);
+  await weatherStore.fetchHourlyForecast(latlng.lat, latlng.lng);
 
 
   // 2. 顯示 Leaflet Popup
@@ -482,21 +486,37 @@ async function onLocationClick(name, code, latlng, type, layer) {
 function generatePopupContent(name, latlng, type, id) {
   const forecast = weatherStore.selectedLocationForecast;
   let forecastHtml = '';
-  if (forecast && forecast.time && forecast.temperature_2m_max && forecast.temperature_2m_min && forecast.weather_code) {
+  // 預期 forecast 結構: { time: [...], temperature_2m: [...], precipitation: [...], weather_code: [...] }
+  if (forecast && forecast.time && forecast.temperature_2m && forecast.precipitation && forecast.weather_code) {
+    // 將每小時資料分組為 7 天
+    const days = {};
     for (let i = 0; i < forecast.time.length; i++) {
-      const date = new Date(forecast.time[i]);
-      const day = date.toLocaleDateString('zh-TW', { weekday: 'short', month: 'numeric', day: 'numeric' });
-      const maxTemp = Math.round(forecast.temperature_2m_max[i]);
-      const minTemp = Math.round(forecast.temperature_2m_min[i]);
-      const weatherIcon = weatherStore.getIconForWeatherCode(forecast.weather_code[i]);
-      forecastHtml += `
-        <div class="flex justify-between items-center text-sm py-1 border-b last:border-b-0">
-          <span>${day}</span>
-          <span>${weatherIcon}</span>
-          <span>${minTemp}°C / ${maxTemp}°C</span>
-        </div>
-      `;
+      const dateObj = new Date(forecast.time[i]);
+      const dayKey = dateObj.toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric', weekday: 'short' });
+      if (!days[dayKey]) days[dayKey] = [];
+      days[dayKey].push({
+        hour: dateObj.getHours(),
+        temp: Math.round(forecast.temperature_2m[i]),
+        rain: forecast.precipitation[i],
+        icon: weatherStore.getIconForWeatherCode(forecast.weather_code[i])
+      });
     }
+    // 橫向捲動卡片，每天一組
+    forecastHtml = Object.entries(days).map(([day, hours]) => `
+      <div class="mb-2">
+        <div class="font-bold text-blue-700 mb-1">${day}</div>
+        <div class="windy-scroll-wrapper flex overflow-x-auto pb-2">
+          ${hours.map(h => `
+            <div class="windy-hour-card min-w-[90px] bg-blue-50 rounded p-2 mx-1 flex flex-col items-center">
+              <div class="text-xs text-gray-500">${h.hour}:00</div>
+              <div class="text-2xl">${h.icon}</div>
+              <div class="font-bold text-lg">${h.temp}°C</div>
+              <div class="text-xs text-blue-600">${h.rain} mm</div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `).join('');
   } else if (weatherStore.isLoadingWeather) {
     forecastHtml = '<p>載入預報中...</p>';
   } else {
@@ -507,12 +527,12 @@ function generatePopupContent(name, latlng, type, id) {
   const favoriteButtonHtml = type === 'campground' ?
     `<div class="mt-4 text-center">
         <button id="add-to-favorite-btn" class="text-red-500 text-2xl hover:scale-110 transition-transform" title="加入我的最愛">❤️</button>
-      </div>` : ''; // 非營地不顯示收藏按鈕
+      </div>` : '';
 
   return `
     <h3 class="font-bold text-lg mb-2">${name}</h3>
-    <div class="text-sm text-gray-700 mb-2">一週天氣預報</div>
-    <div id="popup-forecast-daily" class="max-h-40 overflow-y-auto">${forecastHtml}</div>
+    <div class="text-sm text-gray-700 mb-2">每小時預報（含降雨量）</div>
+    <div id="popup-forecast-hourly">${forecastHtml}</div>
     ${favoriteButtonHtml}
   `;
 }
@@ -592,6 +612,31 @@ onBeforeUnmount(() => {
 @reference "tailwindcss";
 .btn-icon {
   @apply bg-white p-3 rounded-full shadow-md text-xl cursor-pointer hover:bg-gray-100 transition-colors;
+}
+
+/* 我的最愛卡片式樣式 */
+.favorite-card {
+  width: 100%;
+  transition: box-shadow 0.2s, transform 0.2s;
+}
+
+/* 一週天氣橫向排列卡片 */
+.favorite-week-scroll {
+  display: flex;
+  flex-direction: row;
+  gap: 0.5rem;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+.favorite-week-card {
+  min-width: 120px;
+  max-width: 120px;
+  background: #f8fbff;
+  border-radius: 10px;
+  box-shadow: 0 2px 8px rgba(0,0,64,0.06);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
 
 /* 自定義 DivIcon 的樣式，讓它能被點擊 (使用 :deep() 穿透到 Leaflet 生成的 DOM) */

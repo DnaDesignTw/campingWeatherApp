@@ -150,6 +150,20 @@ export const useWeatherStore = defineStore('weather', () => {
     }
   }
   
+  // 獲取單一地點的每小時預報 (7天，含降雨量)
+  async function fetchHourlyForecast(lat, lon) {
+    isLoadingWeather.value = true;
+    try {
+      const response = await apiClient.get(`forecast?latitude=${lat}&longitude=${lon}&hourly=temperature_2m,precipitation,weather_code&timezone=Asia%2FTaipei&forecast_days=7`);
+      selectedLocationForecast.value = response.data.hourly;
+    } catch (error) {
+      console.error('Failed to fetch hourly forecast:', error);
+      selectedLocationForecast.value = null;
+    } finally {
+      isLoadingWeather.value = false;
+    }
+  }
+  
   // --- 我的最愛營地天氣快取（一天有效） ---
   const favoriteCampgroundWeather = ref({}); // { [campId]: { weather, timestamp } }
   const FAVORITE_CACHE_DURATION = 24 * 60 * 60 * 1000; // 1天（毫秒）
@@ -166,7 +180,7 @@ export const useWeatherStore = defineStore('weather', () => {
     const result = {};
 
     for (const camp of campgrounds) {
-      if (!camp.id || !camp.latitude || !camp.longitude) continue;
+      if (!camp.id || camp.latitude === undefined || camp.longitude === undefined || camp.latitude === null || camp.longitude === null || isNaN(camp.latitude) || isNaN(camp.longitude)) continue;
       const cache = favoriteCampgroundWeather.value[camp.id];
       if (cache && (now - cache.timestamp < FAVORITE_CACHE_DURATION)) {
         // 使用快取
@@ -175,26 +189,32 @@ export const useWeatherStore = defineStore('weather', () => {
         // 需查詢
         requests.push(
           apiClient
-            .get(`forecast?latitude=${camp.latitude}&longitude=${camp.longitude}&daily=temperature_2m_max,temperature_2m_min,weather_code&timezone=Asia%2FTaipei&forecast_days=7`)
+            .get(`forecast?latitude=${camp.latitude}&longitude=${camp.longitude}&hourly=temperature_2m,precipitation,weather_code&timezone=Asia%2FTaipei&forecast_days=7`)
             .then((response) => {
-              const daily = response.data.daily;
-              // 格式化一週天氣
-              const weatherArr = daily.time.map((t, i) => ({
-                date: new Date(t).toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric', weekday: 'short' }),
-                min: Math.round(daily.temperature_2m_min[i]),
-                max: Math.round(daily.temperature_2m_max[i]),
-                icon: getIconForWeatherCode(daily.weather_code[i])
-              }));
-              result[camp.id] = weatherArr;
+              const hourly = response.data.hourly;
+              // 分組為 7 天
+              const days = {};
+              for (let i = 0; i < hourly.time.length; i++) {
+                const dateObj = new Date(hourly.time[i]);
+                const dayKey = dateObj.toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric', weekday: 'short' });
+                if (!days[dayKey]) days[dayKey] = [];
+                days[dayKey].push({
+                  hour: dateObj.getHours(),
+                  temp: Math.round(hourly.temperature_2m[i]),
+                  rain: hourly.precipitation[i],
+                  icon: getIconForWeatherCode(hourly.weather_code[i])
+                });
+              }
+              result[camp.id] = days;
               // 寫入快取
               favoriteCampgroundWeather.value[camp.id] = {
-                weather: weatherArr,
+                weather: days,
                 timestamp: Date.now(),
               };
             })
             .catch((error) => {
-              console.error(`Failed to fetch weather for favorite camp ${camp.name}:`, error);
-              result[camp.id] = [];
+              console.error(`Failed to fetch hourly weather for favorite camp ${camp.name}:`, error);
+              result[camp.id] = {};
             })
         );
       }
@@ -219,6 +239,7 @@ export const useWeatherStore = defineStore('weather', () => {
     loadTaiwanGeoJsonData, // 暴露載入 GeoJSON 的 action
     fetchMultipleLocationWeather,
     fetchOneWeekForecast,
+    fetchHourlyForecast,
     // 我的最愛專用
     favoriteCampgroundWeather,
     fetchFavoriteCampgroundsWeather,
