@@ -15,16 +15,19 @@
 }
 .favorite-card {
   min-width: 210px;
+  height: 200px;
   background: #f0f6ff;
   border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(0,0,64,0.08);
+  box-shadow: 0 2px 8px rgba(0, 0, 64, 0.08);
   padding: 1rem;
   display: flex;
   flex-direction: column;
-  transition: box-shadow 0.2s, transform 0.2s;
+  transition:
+    box-shadow 0.2s,
+    transform 0.2s;
 }
 
-@import "tailwindcss";
+@import 'tailwindcss';
 
 #app {
   width: 100%;
@@ -51,18 +54,24 @@ a,
   display: flex;
   align-items: center;
   justify-content: center;
-  filter:drop-shadow(0px 2px 2px rgba(60,60,60,0.3))
+  filter: drop-shadow(0px 2px 2px rgba(60, 60, 60, 0.3));
 }
 
+/* 預設營地 marker 背景色（綠色） */
 .gmap-marker-bg {
-  background: #ea4335;
+  background: #1cad7e;
   border-radius: 50%;
   width: 24px;
   height: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 2px 6px rgba(60,60,60,0.3);
+  box-shadow: 0 2px 6px rgba(60, 60, 60, 0.3);
+}
+
+/* 搜尋/點擊/我的最愛 focus 狀態的營地 marker 背景色（紅色） */
+.gmap-marker-bg.focused {
+  background: #ea4335;
 }
 /* .gmap-marker-bg i {
   color: #fff;
@@ -86,6 +95,25 @@ a,
   font-size: 10px;
   z-index: 2;
 }
+
+#popup-forecast-hourly {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  overflow: auto;
+}
+
+.add-to-favorite-btn {
+  position: absolute;
+  top: 0;
+  right: 0;
+}
+
+/* .custom-marker {
+  background: rgba(0, 0, 0, 0.8);
+  color: #fff;
+  padding: 10px 12px;
+} */
 
 @media (hover: hover) {
   a:hover {

@@ -13,9 +13,12 @@
   "dependencies": {
     "@fortawesome/fontawesome-free": "^6.7.2",
     "@tailwindcss/vite": "^4.1.11",
+    "@turf/centroid": "^7.2.0",
+    "@turf/point-on-feature": "^7.2.0",
     "axios": "^1.10.0",
     "leaflet": "^1.9.4",
     "pinia": "^3.0.3",
+    "turf": "^3.0.14",
     "vue": "^3.5.17",
     "vue-router": "^4.5.1"
   },
