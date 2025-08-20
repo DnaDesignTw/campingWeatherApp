@@ -973,21 +973,21 @@ function generatePopupContent(name, latlng, type, code) {
     if (camp) {
       locationDetailsHtml = `
         <h4 class="text-sm mb-2">關於地點</h4>
-        <p class="text-sm text-gray-600">
-          營地: ${camp.name}
-          <a
+        <p class="text-sm text-gray-600">營地: ${camp.name}</p>
+        <p class="text-sm text-gray-600">海拔: ${camp.altitude}</p>
+        <p class="text-sm text-gray-600 mb-2">座標: ${latlng.lat.toFixed(4)}, ${latlng.lng.toFixed(4)}</p>
+        <a
             href="https://www.google.com/maps/dir/?api=1&destination=${latlng.lat},${latlng.lng}"
             target="_blank"
             rel="noopener noreferrer"
-            class="ml-2 text-blue-600 underline flex items-center"
+            class="ml-2 text-blue-600 underline text-sm"
             title="Google 導航"
           >
             <svg xmlns="http://www.w3.org/2000/svg" class="inline-block h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 3v4m0 0V3m0 4h-4m4 0h4m-4 0v4m0-4v4m0 0H3m0 0v4m0-4h4m-4 0v4m0-4h4" /></svg>
             Google導航
           </a>
-        </p>
-        <p class="text-sm text-gray-600">海拔: ${camp.altitude}</p>
-        <p class="text-sm text-gray-600">座標: ${latlng.lat.toFixed(4)}, ${latlng.lng.toFixed(4)}</p>
+        <a href="https://www.windy.com/?${latlng.lat},${latlng.lng},11,marker" target="_blank" rel="noopener noreferrer" class="ml-2 text-blue-600 underline text-sm"><svg xmlns="http://www.w3.org/2000/svg" class="inline-block h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 3v4m0 0V3m0 4h-4m4 0h4m-4 0v4m0-4v4m0 0H3m0 0v4m0-4h4m-4 0v4m0-4h4" /></svg>Windy</a>
+        <a href="https://www.cwa.gov.tw/V8/C/" target="_blank" rel="noopener noreferrer" class="ml-2 text-blue-600 underline text-sm"><svg xmlns="http://www.w3.org/2000/svg" class="inline-block h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 3v4m0 0V3m0 4h-4m4 0h4m-4 0v4m0-4v4m0 0H3m0 0v4m0-4h4m-4 0v4m0-4h4" /></svg>中央氣象局</a>
         `
     }
   } else {
