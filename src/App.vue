@@ -973,7 +973,19 @@ function generatePopupContent(name, latlng, type, code) {
     if (camp) {
       locationDetailsHtml = `
         <h4 class="text-sm mb-2">關於地點</h4>
-        <p class="text-sm text-gray-600">營地: ${camp.name}</p>
+        <p class="text-sm text-gray-600">
+          營地: ${camp.name}
+          <a
+            href="https://www.google.com/maps/dir/?api=1&destination=${latlng.lat},${latlng.lng}"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="ml-2 text-blue-600 underline flex items-center"
+            title="Google 導航"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="inline-block h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 3v4m0 0V3m0 4h-4m4 0h4m-4 0v4m0-4v4m0 0H3m0 0v4m0-4h4m-4 0v4m0-4h4" /></svg>
+            Google導航
+          </a>
+        </p>
         <p class="text-sm text-gray-600">海拔: ${camp.altitude}</p>
         <p class="text-sm text-gray-600">座標: ${latlng.lat.toFixed(4)}, ${latlng.lng.toFixed(4)}</p>
         `
@@ -1006,10 +1018,16 @@ function generatePopupContent(name, latlng, type, code) {
 
   return `
     <div class="flex flex-col md:flex-row space-y-4 md:space-y-0 md:space-x-4">
-      <div class="w-full md:w-7/10">
-        <div id="popup-forecast-hourly">
+      <div class="w-full md:w-7/10" style="position:relative;">
+        <div id="popup-forecast-hourly" style="position:relative;overflow: hidden;">
           ${headerHtml}
-          ${forecastHtml}
+          <div
+            id="forecast-hourly-scroll"
+            style="overflow-x:auto;position:absolute; left:100px; top:0; cursor:grab; z-index:101; width:calc(100% - 100px);"
+            onmousedown="startDragHourlyScroll(event)"
+          >
+            ${forecastHtml}
+          </div>
         </div>
       </div>
       <div class="w-full md:w-3/10 p-4 bg-gray-50 rounded-lg shadow-sm">
@@ -1027,13 +1045,13 @@ function updateCampgroundMarkers(show) {
   if (show) {
     const zoom = map.getZoom()
     let visibleCampgrounds = []
-    if (zoom >= 13) {
-      // zoom >= 13 顯示視野內全部
+    if (zoom >= 14) {
+      // 縮放級別 >= 14 顯示視野內全部
       visibleCampgrounds = campgroundsStore.campgrounds.filter((camp) =>
         map.getBounds().contains([camp.latitude, camp.longitude]),
       )
-    } else {
-      // 依鄉鎮分組，視野內每個鄉鎮只取前 5 個營地
+    } else if (zoom >= 12) {
+      // 縮放級別 >= 12 且 < 14 依鄉鎮分組，視野內每個鄉鎮只取前 5 個營地
       const visibleCampsByTown = {}
       campgroundsStore.campgrounds.forEach((camp) => {
         if (!map.getBounds().contains([camp.latitude, camp.longitude])) return
@@ -1045,11 +1063,25 @@ function updateCampgroundMarkers(show) {
         }
       })
       visibleCampgrounds = Object.values(visibleCampsByTown).flat()
+    } else {
+      // 縮放級別 < 12 依縣市分組，視野內每個縣市只取前 5 個營地
+      const visibleCampsByCounty = {}
+      campgroundsStore.campgrounds.forEach((camp) => {
+        if (!map.getBounds().contains([camp.latitude, camp.longitude])) return
+        const county = camp.county || '未知縣市' // 假設你的數據中有縣市屬性
+        if (!visibleCampsByCounty[county]) visibleCampsByCounty[county] = []
+        if (visibleCampsByCounty[county].length < 5) {
+          visibleCampsByCounty[county].push(camp)
+          visibleCampgrounds.push(camp)
+        }
+      })
+      visibleCampgrounds = Object.values(visibleCampsByCounty).flat()
     }
     showLoadMore.value = false
 
     // 追蹤 focus 狀態的營地 id
-    if (typeof updateCampgroundMarkers.focusedCampId === 'undefined') updateCampgroundMarkers.focusedCampId = null
+    if (typeof updateCampgroundMarkers.focusedCampId === 'undefined')
+      updateCampgroundMarkers.focusedCampId = null
     visibleCampgrounds.forEach((camp) => {
       if (camp.latitude && camp.longitude) {
         // 定義 isFocused 變數
@@ -1077,6 +1109,33 @@ function updateCampgroundMarkers(show) {
 const resetMapView = () => {
   map.setView(initialMapView.center, initialMapView.zoom)
 }
+
+// --- 拖移 #forecast-hourly-scroll ---
+let dragHourlyScroll = null
+let dragStartX = 0
+let dragStartScrollLeft = 0
+function startDragHourlyScroll(e) {
+  const scrollDiv = document.getElementById('forecast-hourly-scroll')
+  if (!scrollDiv) return
+  dragHourlyScroll = scrollDiv
+  dragStartX = e.clientX
+  dragStartScrollLeft = scrollDiv.scrollLeft
+  scrollDiv.style.cursor = 'grabbing'
+  document.addEventListener('mousemove', onDragHourlyScroll)
+  document.addEventListener('mouseup', stopDragHourlyScroll)
+}
+function onDragHourlyScroll(e) {
+  if (!dragHourlyScroll) return
+  const dx = dragStartX - e.clientX
+  dragHourlyScroll.scrollLeft = dragStartScrollLeft + dx
+}
+function stopDragHourlyScroll() {
+  if (dragHourlyScroll) dragHourlyScroll.style.cursor = 'grab'
+  dragHourlyScroll = null
+  document.removeEventListener('mousemove', onDragHourlyScroll)
+  document.removeEventListener('mouseup', stopDragHourlyScroll)
+}
+window.startDragHourlyScroll = startDragHourlyScroll
 </script>
 
 <style scoped>
@@ -1305,7 +1364,10 @@ const resetMapView = () => {
   background: #f3f4f6;
 }
 
-/* :deep(.gmap-marker-bg.focused) {
-  background: #ea4335;
-} */
+#forecast-hourly-scroll {
+  overflow-x: auto;
+  position: relative;
+  width: 100%;
+  cursor: grab;
+}
 </style>
