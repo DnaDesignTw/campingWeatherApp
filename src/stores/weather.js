@@ -65,12 +65,12 @@ export const useWeatherStore = defineStore('weather', () => {
     isLoadingWeather.value = true
     try {
       // 載入縣市 GeoJSON
-      const countyResponse = await axios.get('/data/taiwan_cityships_2024.geojson') // 假設這是你的縣市 GeoJSON 檔案名
+      const countyResponse = await axios.get('./data/taiwan_cityships_2024.geojson') // 假設這是你的縣市 GeoJSON 檔案名
       taiwanCountyGeoJson.value = countyResponse.data
       console.log('載入縣市 GeoJSON 完成')
 
       // 載入鄉鎮 GeoJSON (替換成你實際的鄉鎮 GeoJSON 檔案名)
-      const townshipResponse = await axios.get('/data/taiwan_townships_2024.geojson') // 假設這是你的鄉鎮 GeoJSON 檔
+      const townshipResponse = await axios.get('./data/taiwan_townships_2024.geojson') // 假設這是你的鄉鎮 GeoJSON 檔
       taiwanTownshipGeoJson.value = townshipResponse.data
       console.log('載入鄉鎮 GeoJSON 完成')
     } catch (error) {

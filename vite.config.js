@@ -7,7 +7,7 @@ import vueDevTools from 'vite-plugin-vue-devtools'
 
 // https://vite.dev/config/
 export default defineConfig({
-  base: '/camping-weather-app/',
+  base: '/campingWeatherApp/',
   plugins: [vue(), vueDevTools(), tailwindcss()],
   resolve: {
     alias: {
