@@ -23,7 +23,7 @@
         type="text"
         v-model="searchQuery"
         placeholder="搜尋縣市、鄉鎮或營地..."
-        class="border p-2 rounded w-64"
+        class="border p-2 rounded w-64 mb-2 md:mb-0"
         @keyup.enter="performSearch"
       />
       <button @click="performSearch" class="ml-2 px-4 py-2 bg-blue-500 text-white rounded">
@@ -58,7 +58,7 @@
     <transition name="slide-right-favorite">
       <div
         v-if="isFavoritesListOpen"
-        class="fixed top-0 right-0 z-40 bg-white p-4 rounded-l-lg shadow-xl w-[480px] h-full flex flex-col favorite-fade-panel"
+        class="fixed top-0 right-0 z-40 bg-white p-4 rounded-l-lg shadow-xl w-4/5 md:w-[480px] h-full flex flex-col favorite-fade-panel"
       >
         <button
           @click="isFavoritesListOpen = false"
@@ -816,63 +816,49 @@ async function onLocationClick(name, code, latlng, type, layer) {
     isFavoritesListOpen.value = false
   }
 
-  // 1. 獲取並顯示該地點的一週天氣預報
+  // 1. 先將地圖平移到 marker 位置（畫面中央）
+  if (latlng && latlng.lat && latlng.lng) {
+    map.panTo([latlng.lat, latlng.lng], { animate: true })
+  }
+
+  // 2. 獲取並顯示該地點的一週天氣預報
   await weatherStore.fetchHourlyForecast(latlng.lat, latlng.lng)
 
-  // 2. 顯示 Leaflet Popup
-  //const popupContent = generatePopupContent(name, latlng, type, code);
-  //const popup = L.popup({ minWidth: 250, maxWidth: 300, offset: [0, -30] })
-  //  .setLatLng(latlng)
-  //  .setContent(popupContent)
-  //  .openOn(map);
-
-  // 2. 顯示底部滿版區塊內容
+  // 3. 顯示底部滿版區塊內容
   const content = generatePopupContent(name, latlng, type, code)
   bottomPopupContent.value = content //
   isBottomPopupOpen.value = true // 開啟底部彈窗
 
-  // 3. Popup 開啟後，為「加入我的最愛」按鈕綁定事件（直接 setTimeout，確保 DOM 已插入）
+  // 4. Popup 開啟後，為「加入我的最愛」按鈕綁定事件（直接 setTimeout，確保 DOM 已插入）
   nextTick(() => {
     const addToFavoriteBtn = document.getElementById('add-to-favorite-btn')
     if (addToFavoriteBtn) {
-      // 為了讓 `name`, `latlng`, `type`, `code` 在事件監聽器中可用，
-      // 確保它們在 onLocationClick 的作用域內是可訪問的。
-      const currentName = name // 使用新的變數名稱避免混淆
+      const currentName = name
       const currentLatlng = latlng
       const currentType = type
       const currentCode = code
-
       addToFavoriteBtn.onclick = () => {
         if (currentType === 'campground') {
           const camp = campgroundsStore.campgrounds.find(
             (c) => String(c.id) === String(currentCode),
           )
           if (camp) {
-            // 判斷是否已在我的最愛中
             const isAlreadyFavorite = campgroundsStore.favoriteCampgrounds.some(
               (fav) => String(fav.id) === String(camp.id),
             )
-
             if (isAlreadyFavorite) {
-              // 如果已加入，則移除
-              campgroundsStore.removeFavorite(camp.id) // 假設您有 removeFavorite action
+              campgroundsStore.removeFavorite(camp.id)
               alert(`${camp.name} 已從我的最愛移除！`)
             } else {
-              // 如果未加入，則添加
               campgroundsStore.addFavorite(camp)
               alert(`${camp.name} 已加入我的最愛！`)
             }
-
-            // *** 關鍵步驟：重新生成彈窗內容，以更新愛心圖標 ***
             bottomPopupContent.value = generatePopupContent(
               currentName,
               currentLatlng,
               currentType,
               currentCode,
             )
-
-            // 您可以選擇是否在點擊後關閉彈窗
-            // closeBottomPopup();
           }
         } else {
           alert(
@@ -882,12 +868,6 @@ async function onLocationClick(name, code, latlng, type, layer) {
       }
     }
   })
-
-  // 4. 只針對區域（多邊形）點擊才平移地圖，marker 點擊不平移
-  if (layer && type !== 'campground') {
-    const center = layer.getBounds().getCenter()
-    map.panTo(center, { animate: true })
-  }
 }
 
 // --- 根據 Store 中的數據生成 Popup 內容 ---
@@ -896,9 +876,9 @@ function generatePopupContent(name, latlng, type, code) {
   let forecastHtml = ''
   // 表頭只顯示一次，forecastHtml 不包含 headerHtml
   const headerHtml = `
-    <div class="windy-hour-card p-1 text-right font-bold bg-gray-100 sticky left-0 z-10" style="min-width: 100px;">
-      <div class="text-xs/7 text-gray-500" style="height:20px">日期</div>
-      <div class="text-xs/7 text-gray-500" style="height:28px">小時</div>
+    <div class="windy-hour-card w-20 md:w-32 p-1 text-right font-bold bg-gray-100 sticky left-0 z-10">
+      <div class="text-xs/7 text-gray-500" style="height:20px">日期 <i class="fa-regular fa-calendar"></i></div>
+      <div class="text-xs/7 text-gray-500" style="height:28px">小時 <i class="fa-regular fa-clock"></i></div>
       <div class="text-xs text-gray-500" style="height:32px;line-height:32px;"> </div>
       <div class="text-xs/7 text-gray-500" style="height:28px">溫度 °C</div>
       <div class="text-xs/7 text-gray-500" style="height:28px">降雨量 mm</div>
@@ -1017,20 +997,21 @@ function generatePopupContent(name, latlng, type, code) {
       : ''
 
   return `
-    <div class="flex flex-col md:flex-row space-y-4 md:space-y-0 md:space-x-4">
+    <div class="flex flex-col-reverse md:flex-row md:space-x-4">
       <div class="w-full md:w-7/10" style="position:relative;">
         <div id="popup-forecast-hourly" style="position:relative;overflow: hidden;">
           ${headerHtml}
           <div
             id="forecast-hourly-scroll"
-            style="overflow-x:auto;position:absolute; left:100px; top:0; cursor:grab; z-index:101; width:calc(100% - 100px);"
+            class="left-20 md:left-32"
+            style="overflow-x:auto;position:absolute; top:0; cursor:grab; z-index:101; width:calc(100% - 100px);"
             onmousedown="startDragHourlyScroll(event)"
           >
             ${forecastHtml}
           </div>
         </div>
       </div>
-      <div class="w-full md:w-3/10 p-4 bg-gray-50 rounded-lg shadow-sm">
+      <div class="w-full md:w-3/10 mb-4 md:mb-0 p-4 bg-gray-50 rounded-lg shadow-sm">
         ${locationDetailsHtml}
       </div>
     </div>
@@ -1273,7 +1254,7 @@ window.startDragHourlyScroll = startDragHourlyScroll
   bottom: 0;
   left: 0;
   width: 100%;
-  height: 240px;
+  height: 50vh;
   max-height: 80%;
   background-color: transparent;
   z-index: 30;
@@ -1286,11 +1267,20 @@ window.startDragHourlyScroll = startDragHourlyScroll
 .bottom-full-popup-content {
   background-color: white; /* 白色背景 */
   width: 100%; /* 內容區寬度佔滿父容器（這裡就是 overlay 的 100%） */
-  padding: 1.5rem; /* 內邊距 */
+  padding: 0.8rem; /* 內邊距 */
   box-shadow: 0 -5px 15px rgba(0, 0, 0, 0.2); /* 頂部陰影 */
   pointer-events: auto; /* 內容區可以捕獲點擊事件 */
   transform: translateY(0); /* 初始狀態，無位移 */
   opacity: 1; /* 初始狀態，完全不透明 */
+}
+
+@media (width >= 48rem) {
+  .bottom-full-popup-overlay {
+    height: 240px;
+  }
+  .bottom-full-popup-content {
+    padding: 1.5rem 1.5rem 1.5rem 0; /* 內邊距 */
+  }
 }
 
 /* 新增底部 Popup 關閉按鈕的樣式 */
