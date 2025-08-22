@@ -340,7 +340,7 @@ function loadAllMarkers() {
 }
 
 // --- 地圖初始化 ---
-const initMap = async () => {
+const initMap = () => {
   if (map) {
     map.remove() // 如果地圖已存在，先移除，防止重複初始化
   }
@@ -383,144 +383,6 @@ const initMap = async () => {
   campgroundMarkersLayer.addTo(map)
   locationLabelsLayer.addTo(map)
 
-  // 1. 載入原始 GeoJSON 數據到 Pinia Store
-  await weatherStore.loadTaiwanGeoJsonData()
-
-  // 2. 從 Store 取得原始 GeoJSON 數據
-  const countyData = weatherStore.taiwanCountyGeoJson
-  const townshipData = weatherStore.taiwanTownshipGeoJson
-
-  // 3. 準備一個陣列來儲存所有行政區的中心點經緯度
-  const processedLocationCoords = []
-
-  // 4. 處理縣市 GeoJSON：計算中心點並綁定事件
-  if (countyData) {
-    countyGeoJsonLayer = L.geoJSON(countyData, {
-      style: (feature) => ({
-        // 縣市邊界預設樣式
-        fillColor: '#ADD8E6', // 淺藍色填充
-        weight: 0,
-        opacity: 0,
-        color: 'white', // 白色邊框
-        dashArray: '3',
-        fillOpacity: 0.6,
-      }),
-      onEachFeature: (feature, layer) => {
-        const countyName = feature.properties.COUNTYNAME // 假設 GeoJSON 中縣市名稱屬性為 COUNTYNAME
-        const countyCode = feature.properties.COUNTYCODE || countyName // 假設縣市代碼為 COUNTYCODE
-
-        // 修正宜蘭縣、基隆市、高雄市：若為 MultiPolygon，僅取最大面積且在本島範圍的 Polygon
-        let featureForCenter = feature
-        if (
-          (countyName === '宜蘭縣' || countyName === '基隆市' || countyName === '高雄市') &&
-          feature.geometry.type === 'MultiPolygon'
-        ) {
-          let maxArea = 0
-          let maxPolygon = null
-          feature.geometry.coordinates.forEach((coords) => {
-            const poly = {
-              type: 'Feature',
-              geometry: { type: 'Polygon', coordinates: coords },
-              properties: feature.properties,
-            }
-            const first = coords[0][0]
-            const inTaiwan =
-              first[0] > 119.8 && first[0] < 122 && first[1] > 21.8 && first[1] < 25.5
-            const area = coords[0].length
-            if (inTaiwan && area > maxArea) {
-              maxArea = area
-              maxPolygon = poly
-            }
-          })
-          if (maxPolygon) featureForCenter = maxPolygon
-        }
-        // 使用 pointOnFeature 取得多邊形內部最靠近中心的點
-        const point = pointOnFeature(featureForCenter)
-        const center = point.geometry.coordinates
-        processedLocationCoords.push({
-          lat: center[1],
-          lon: center[0],
-          type: 'county',
-          name: countyName,
-          code: countyCode,
-        })
-
-        // 綁定點擊、滑鼠移入/移出事件到 GeoJSON 圖層
-        layer.on({
-          click: (e) => onLocationClick(countyName, countyCode, e.latlng, 'county', layer),
-        })
-      },
-    }) // 不加 .addTo(map) 這裡，由 updateBoundaryLayers 管理
-  }
-
-  // 5. 處理鄉鎮 GeoJSON：計算中心點並建立圖層 (不立即添加到地圖)
-  if (townshipData) {
-    townshipGeoJsonLayer = L.geoJSON(townshipData, {
-      // Assign to the new layer variable
-      style: (feature) => ({
-        // 鄉鎮邊界預設樣式
-        fillColor: '#ADD8E6', // 淺藍色填充
-        weight: 1,
-        opacity: 0.8,
-        color: 'gray', // 白色邊框
-        dashArray: '5',
-        fillOpacity: 0.6,
-      }),
-      onEachFeature: (feature, layer) => {
-        const townshipName = feature.properties.TOWNNAME // 假設鄉鎮名稱屬性
-        const countyName = feature.properties.COUNTYNAME // 假設所屬縣市名稱
-        const townshipCode = feature.properties.TOWNCODE || townshipName // 假設鄉鎮代碼
-
-        // 修正頭城鎮、基隆市中正區、高雄市旗津區：若為 MultiPolygon，僅取最大面積且在本島範圍的 Polygon
-        let featureForCenter = feature
-        if (
-          (townshipName === '頭城鎮' ||
-            (countyName === '基隆市' && townshipName === '中正區') ||
-            (countyName === '高雄市' && townshipName === '旗津區')) &&
-          feature.geometry.type === 'MultiPolygon'
-        ) {
-          let maxArea = 0
-          let maxPolygon = null
-          feature.geometry.coordinates.forEach((coords) => {
-            const poly = {
-              type: 'Feature',
-              geometry: { type: 'Polygon', coordinates: coords },
-              properties: feature.properties,
-            }
-            const first = coords[0][0]
-            const inTaiwan =
-              first[0] > 119.8 && first[0] < 122 && first[1] > 21.8 && first[1] < 25.5
-            const area = coords[0].length
-            if (inTaiwan && area > maxArea) {
-              maxArea = area
-              maxPolygon = poly
-            }
-          })
-          if (maxPolygon) featureForCenter = maxPolygon
-        }
-        // 使用 pointOnFeature 計算中心
-        const point = pointOnFeature(featureForCenter)
-        const center = point.geometry.coordinates
-        processedLocationCoords.push({
-          lat: center[1],
-          lon: center[0],
-          type: 'township',
-          name: townshipName,
-          county: countyName,
-          code: townshipCode,
-        })
-
-        // 綁定點擊事件到鄉鎮 GeoJSON 圖層
-        layer.on({
-          click: (e) => onLocationClick(townshipName, townshipCode, e.latlng, 'township', layer),
-        })
-      },
-    }) // 不加 .addTo(map) 這裡，由 updateBoundaryLayers 管理
-  }
-
-  // 6. 將計算好的所有行政區中心點陣列更新到 Pinia Store
-  weatherStore.setLocationCoordsMap(processedLocationCoords)
-
   // 7. 監聽地圖縮放和移動事件，動態更新縣市/鄉鎮標籤和邊界
   map.on('zoomend', () => {
     updateLocationLabels() // 更新標籤
@@ -549,15 +411,161 @@ const initMap = async () => {
       updateCampgroundMarkers(true)
     }
   })
-
-  // 9. 初始顯示地圖標籤和邊界 (縣市或鄉鎮)
-  await updateLocationLabels()
-  await updateBoundaryLayers() // Call this initially
 }
 
 // 初始化地圖
-onMounted(() => {
+onMounted(async () => {
+  // 1. 同步初始化地圖，讓畫面盡快顯示
   initMap()
+
+  // 2. 立即對地圖中心點發起天氣請求
+  // 這樣能讓地圖一出現，使用者就能看到天氣資訊，提升體驗
+  const initialLatLng = map.getCenter()
+  weatherStore.fetchHourlyForecast(initialLatLng.lat, initialLatLng.lng)
+
+  // 3. 在背景載入 GeoJSON 數據，這部分是耗時操作
+  weatherStore
+    .loadTaiwanGeoJsonData()
+    .then(() => {
+      // 4. 取得原始 GeoJSON 數據
+      const countyData = weatherStore.taiwanCountyGeoJson
+      const townshipData = weatherStore.taiwanTownshipGeoJson
+
+      // 5. 處理 GeoJSON 數據，建立 locationCoordsMap
+      const processedLocationCoords = []
+      if (countyData) {
+        countyGeoJsonLayer = L.geoJSON(countyData, {
+          style: (feature) => ({
+            // 縣市邊界預設樣式
+            fillColor: '#ADD8E6', // 淺藍色填充
+            weight: 0,
+            opacity: 0,
+            color: 'white', // 白色邊框
+            dashArray: '3',
+            fillOpacity: 0.6,
+          }),
+          onEachFeature: (feature, layer) => {
+            const countyName = feature.properties.COUNTYNAME // 假設 GeoJSON 中縣市名稱屬性為 COUNTYNAME
+            const countyCode = feature.properties.COUNTYCODE || countyName // 假設縣市代碼為 COUNTYCODE
+
+            // 修正宜蘭縣、基隆市、高雄市：若為 MultiPolygon，僅取最大面積且在本島範圍的 Polygon
+            let featureForCenter = feature
+            if (
+              (countyName === '宜蘭縣' || countyName === '基隆市' || countyName === '高雄市') &&
+              feature.geometry.type === 'MultiPolygon'
+            ) {
+              let maxArea = 0
+              let maxPolygon = null
+              feature.geometry.coordinates.forEach((coords) => {
+                const poly = {
+                  type: 'Feature',
+                  geometry: { type: 'Polygon', coordinates: coords },
+                  properties: feature.properties,
+                }
+                const first = coords[0][0]
+                const inTaiwan =
+                  first[0] > 119.8 && first[0] < 122 && first[1] > 21.8 && first[1] < 25.5
+                const area = coords[0].length
+                if (inTaiwan && area > maxArea) {
+                  maxArea = area
+                  maxPolygon = poly
+                }
+              })
+              if (maxPolygon) featureForCenter = maxPolygon
+            }
+            // 使用 pointOnFeature 取得多邊形內部最靠近中心的點
+            const point = pointOnFeature(featureForCenter)
+            const center = point.geometry.coordinates
+            processedLocationCoords.push({
+              lat: center[1],
+              lon: center[0],
+              type: 'county',
+              name: countyName,
+              code: countyCode,
+            })
+
+            // 綁定點擊、滑鼠移入/移出事件到 GeoJSON 圖層
+            layer.on({
+              click: (e) => onLocationClick(countyName, countyCode, e.latlng, 'county', layer),
+            })
+          },
+        }) // 不加 .addTo(map) 這裡，由 updateBoundaryLayers 管理
+      }
+      if (townshipData) {
+        townshipGeoJsonLayer = L.geoJSON(townshipData, {
+          // Assign to the new layer variable
+          style: (feature) => ({
+            // 鄉鎮邊界預設樣式
+            fillColor: '#ADD8E6', // 淺藍色填充
+            weight: 1,
+            opacity: 0.8,
+            color: 'gray', // 白色邊框
+            dashArray: '5',
+            fillOpacity: 0.6,
+          }),
+          onEachFeature: (feature, layer) => {
+            const townshipName = feature.properties.TOWNNAME // 假設鄉鎮名稱屬性
+            const countyName = feature.properties.COUNTYNAME // 假設所屬縣市名稱
+            const townshipCode = feature.properties.TOWNCODE || townshipName // 假設鄉鎮代碼
+
+            // 修正頭城鎮、基隆市中正區、高雄市旗津區：若為 MultiPolygon，僅取最大面積且在本島範圍的 Polygon
+            let featureForCenter = feature
+            if (
+              (townshipName === '頭城鎮' ||
+                (countyName === '基隆市' && townshipName === '中正區') ||
+                (countyName === '高雄市' && townshipName === '旗津區')) &&
+              feature.geometry.type === 'MultiPolygon'
+            ) {
+              let maxArea = 0
+              let maxPolygon = null
+              feature.geometry.coordinates.forEach((coords) => {
+                const poly = {
+                  type: 'Feature',
+                  geometry: { type: 'Polygon', coordinates: coords },
+                  properties: feature.properties,
+                }
+                const first = coords[0][0]
+                const inTaiwan =
+                  first[0] > 119.8 && first[0] < 122 && first[1] > 21.8 && first[1] < 25.5
+                const area = coords[0].length
+                if (inTaiwan && area > maxArea) {
+                  maxArea = area
+                  maxPolygon = poly
+                }
+              })
+              if (maxPolygon) featureForCenter = maxPolygon
+            }
+            // 使用 pointOnFeature 計算中心
+            const point = pointOnFeature(featureForCenter)
+            const center = point.geometry.coordinates
+            processedLocationCoords.push({
+              lat: center[1],
+              lon: center[0],
+              type: 'township',
+              name: townshipName,
+              county: countyName,
+              code: townshipCode,
+            })
+
+            // 綁定點擊事件到鄉鎮 GeoJSON 圖層
+            layer.on({
+              click: (e) =>
+                onLocationClick(townshipName, townshipCode, e.latlng, 'township', layer),
+            })
+          },
+        }) // 不加 .addTo(map) 這裡，由 updateBoundaryLayers 管理
+      }
+
+      // 6. 將處理好的資料更新到 Store
+      weatherStore.setLocationCoordsMap(processedLocationCoords)
+      // 數據載入成功後，觸發地圖圖層更新
+      updateLocationLabels()
+      updateBoundaryLayers()
+    })
+    .catch((error) => {
+      console.error('GeoJSON 載入失敗:', error)
+      // 可以在這裡顯示錯誤訊息給使用者
+    })
 })
 
 // 組件卸載前清理
