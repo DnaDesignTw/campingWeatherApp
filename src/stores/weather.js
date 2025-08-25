@@ -3,7 +3,6 @@ import { ref } from 'vue'
 import { defineStore } from 'pinia'
 import apiClient from '@/plugins/axios' // 引入你的 axios 實例
 import axios from 'axios' // 再次引入 axios 用於載入本地 GeoJSON 檔案
-import pointOnFeature from '@turf/point-on-feature'
 
 export const useWeatherStore = defineStore('weather', () => {
   const countyWeather = ref({})
@@ -61,20 +60,16 @@ export const useWeatherStore = defineStore('weather', () => {
   const getIconForWeatherCode = (code) => weatherCodeIcons[code] || '❓'
 
   // --- 2. 修改：載入 GeoJSON 數據的 actions ---
-  async function loadTaiwanGeoJsonData() {
+  async function loadProcessedLocations() {
     // 如果已經載入過，直接返回，避免重複請求
     if (isGeoJsonLoaded.value) return
 
     isGeoJsonLoading.value = true
     try {
-      // 使用 Promise.all 同時發起兩個請求
-      const [countyResponse, townshipResponse] = await Promise.all([
-        axios.get('./data/taiwan_cityships_2024.geojson'),
-        axios.get('./data/taiwan_townships_2024.geojson'),
-      ])
-      taiwanCountyGeoJson.value = countyResponse.data
-      taiwanTownshipGeoJson.value = townshipResponse.data
-      console.log('GeoJSON 檔案載入完成')
+      const url = `${import.meta.env.BASE_URL}data/processed-locations.json`
+      const response = await axios.get(url)
+      locationCoordsMap.value = response.data
+      console.log('已載入處理後的地理位置資料。')
       isGeoJsonLoaded.value = true // 標記為已載入
     } catch (error) {
       console.error('載入台灣地理數據失敗:', error)
@@ -242,7 +237,7 @@ export const useWeatherStore = defineStore('weather', () => {
     setLocationCoordsMap,
     getIconForWeatherCode,
     // Actions
-    loadTaiwanGeoJsonData, // 暴露載入 GeoJSON 的 action
+    loadProcessedLocations, // 暴露載入 GeoJSON 的 action
     fetchMultipleLocationWeather,
     fetchOneWeekForecast,
     fetchHourlyForecast,

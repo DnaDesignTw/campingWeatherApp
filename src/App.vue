@@ -191,6 +191,7 @@ import 'leaflet/dist/leaflet.css' // 引入 Leaflet 樣式
 import '@fortawesome/fontawesome-free/css/all.min.css' // 引入 Font Awesome 樣式
 import { useWeatherStore } from '@/stores/weather'
 import { useCampgroundsStore } from '@/stores/campgrounds'
+import axios from 'axios' // 再次引入 axios 用於載入本地 GeoJSON 檔案
 
 // 修正 Leaflet 預設圖標路徑問題 (避免 Marker 顯示為藍色方塊)
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png'
@@ -230,6 +231,8 @@ let countyGeoJsonLayer = null // 儲存縣市 GeoJSON 圖層實例 (用於樣式
 let townshipGeoJsonLayer = null // 新增：儲存鄉鎮 GeoJSON 圖層實例
 let campgroundMarkersLayer = L.featureGroup() // 用於管理露營地 Marker 的圖層群組
 let locationLabelsLayer = L.featureGroup() // 用於管理縣市/鄉鎮標籤 Marker 的圖層群組
+let countyGeoJsonData = null
+let townshipGeoJsonData = null
 
 // 預設地圖視圖
 const initialMapView = { center: [24.76, 121.43], zoom: 10 } // 台灣中心點及初始縮放級別
@@ -301,6 +304,15 @@ watch(searchQuery, (newQuery) => {
   ]
 })
 
+watch(
+  () => campgroundsStore.showCampgroundMarkers,
+  (newValue) => {
+    if (!map) return
+    markerLimit.value = 50
+    updateCampgroundMarkers(newValue)
+  },
+)
+
 // 搜尋功能 (即時顯示結果，按下搜尋則導航到第一個結果)
 const performSearch = () => {
   if (searchResults.value.length > 0) {
@@ -345,6 +357,9 @@ const initMap = () => {
     map.remove() // 如果地圖已存在，先移除，防止重複初始化
   }
 
+  countyGeoJsonLayer = null
+  townshipGeoJsonLayer = null
+
   // 創建地圖實例並設定初始視圖
   map = L.map('mapContainer').setView(initialMapView.center, initialMapView.zoom)
 
@@ -385,20 +400,16 @@ const initMap = () => {
 
   // 7. 監聽地圖縮放和移動事件，動態更新縣市/鄉鎮標籤和邊界
   map.on('zoomend', () => {
+    console.log('目前地圖縮放層級：', map.getZoom())
     updateLocationLabels() // 更新標籤
     updateBoundaryLayers() // 更新邊界圖層
   })
-  map.on('moveend', updateLocationLabels) // 只更新標籤，邊界圖層只在縮放時改變
+  map.on('moveend', () => {
+    updateLocationLabels()
+  }) // 只更新標籤，邊界圖層只在縮放時改變
 
   // 8. 監聽營地 Marker 顯示狀態，並更新地圖上的 Marker
-  watch(
-    () => campgroundsStore.showCampgroundMarkers,
-    (newValue) => {
-      if (!map) return
-      markerLimit.value = 50
-      updateCampgroundMarkers(newValue)
-    },
-  )
+
   map.on('moveend', () => {
     if (campgroundsStore.showCampgroundMarkers) {
       markerLimit.value = 50
@@ -413,158 +424,24 @@ const initMap = () => {
   })
 }
 
-// 初始化地圖
-onMounted(async () => {
-  // 1. 同步初始化地圖，讓畫面盡快顯示
+// onMounted
+onMounted(() => {
+  // 1. 初始化地圖，讓它立刻顯示
   initMap()
 
-  // 2. 立即對地圖中心點發起天氣請求
-  // 這樣能讓地圖一出現，使用者就能看到天氣資訊，提升體驗
-  const initialLatLng = map.getCenter()
-  weatherStore.fetchHourlyForecast(initialLatLng.lat, initialLatLng.lng)
-
-  // 3. 在背景載入 GeoJSON 數據，這部分是耗時操作
+  // 2. 載入已經預先處理好的資料
   weatherStore
-    .loadTaiwanGeoJsonData()
+    .loadProcessedLocations()
     .then(() => {
-      // 4. 取得原始 GeoJSON 數據
-      const countyData = weatherStore.taiwanCountyGeoJson
-      const townshipData = weatherStore.taiwanTownshipGeoJson
+      // 資料已經在 store.locationCoordsMap 中了，直接使用
+      console.log('已載入處理後的地理位置資料。開始更新地圖。')
 
-      // 5. 處理 GeoJSON 數據，建立 locationCoordsMap
-      const processedLocationCoords = []
-      if (countyData) {
-        countyGeoJsonLayer = L.geoJSON(countyData, {
-          style: (feature) => ({
-            // 縣市邊界預設樣式
-            fillColor: '#ADD8E6', // 淺藍色填充
-            weight: 0,
-            opacity: 0,
-            color: 'white', // 白色邊框
-            dashArray: '3',
-            fillOpacity: 0.6,
-          }),
-          onEachFeature: (feature, layer) => {
-            const countyName = feature.properties.COUNTYNAME // 假設 GeoJSON 中縣市名稱屬性為 COUNTYNAME
-            const countyCode = feature.properties.COUNTYCODE || countyName // 假設縣市代碼為 COUNTYCODE
-
-            // 修正宜蘭縣、基隆市、高雄市：若為 MultiPolygon，僅取最大面積且在本島範圍的 Polygon
-            let featureForCenter = feature
-            if (
-              (countyName === '宜蘭縣' || countyName === '基隆市' || countyName === '高雄市') &&
-              feature.geometry.type === 'MultiPolygon'
-            ) {
-              let maxArea = 0
-              let maxPolygon = null
-              feature.geometry.coordinates.forEach((coords) => {
-                const poly = {
-                  type: 'Feature',
-                  geometry: { type: 'Polygon', coordinates: coords },
-                  properties: feature.properties,
-                }
-                const first = coords[0][0]
-                const inTaiwan =
-                  first[0] > 119.8 && first[0] < 122 && first[1] > 21.8 && first[1] < 25.5
-                const area = coords[0].length
-                if (inTaiwan && area > maxArea) {
-                  maxArea = area
-                  maxPolygon = poly
-                }
-              })
-              if (maxPolygon) featureForCenter = maxPolygon
-            }
-            // 使用 pointOnFeature 取得多邊形內部最靠近中心的點
-            const point = pointOnFeature(featureForCenter)
-            const center = point.geometry.coordinates
-            processedLocationCoords.push({
-              lat: center[1],
-              lon: center[0],
-              type: 'county',
-              name: countyName,
-              code: countyCode,
-            })
-
-            // 綁定點擊、滑鼠移入/移出事件到 GeoJSON 圖層
-            layer.on({
-              click: (e) => onLocationClick(countyName, countyCode, e.latlng, 'county', layer),
-            })
-          },
-        }) // 不加 .addTo(map) 這裡，由 updateBoundaryLayers 管理
-      }
-      if (townshipData) {
-        townshipGeoJsonLayer = L.geoJSON(townshipData, {
-          // Assign to the new layer variable
-          style: (feature) => ({
-            // 鄉鎮邊界預設樣式
-            fillColor: '#ADD8E6', // 淺藍色填充
-            weight: 1,
-            opacity: 0.8,
-            color: 'gray', // 白色邊框
-            dashArray: '5',
-            fillOpacity: 0.6,
-          }),
-          onEachFeature: (feature, layer) => {
-            const townshipName = feature.properties.TOWNNAME // 假設鄉鎮名稱屬性
-            const countyName = feature.properties.COUNTYNAME // 假設所屬縣市名稱
-            const townshipCode = feature.properties.TOWNCODE || townshipName // 假設鄉鎮代碼
-
-            // 修正頭城鎮、基隆市中正區、高雄市旗津區：若為 MultiPolygon，僅取最大面積且在本島範圍的 Polygon
-            let featureForCenter = feature
-            if (
-              (townshipName === '頭城鎮' ||
-                (countyName === '基隆市' && townshipName === '中正區') ||
-                (countyName === '高雄市' && townshipName === '旗津區')) &&
-              feature.geometry.type === 'MultiPolygon'
-            ) {
-              let maxArea = 0
-              let maxPolygon = null
-              feature.geometry.coordinates.forEach((coords) => {
-                const poly = {
-                  type: 'Feature',
-                  geometry: { type: 'Polygon', coordinates: coords },
-                  properties: feature.properties,
-                }
-                const first = coords[0][0]
-                const inTaiwan =
-                  first[0] > 119.8 && first[0] < 122 && first[1] > 21.8 && first[1] < 25.5
-                const area = coords[0].length
-                if (inTaiwan && area > maxArea) {
-                  maxArea = area
-                  maxPolygon = poly
-                }
-              })
-              if (maxPolygon) featureForCenter = maxPolygon
-            }
-            // 使用 pointOnFeature 計算中心
-            const point = pointOnFeature(featureForCenter)
-            const center = point.geometry.coordinates
-            processedLocationCoords.push({
-              lat: center[1],
-              lon: center[0],
-              type: 'township',
-              name: townshipName,
-              county: countyName,
-              code: townshipCode,
-            })
-
-            // 綁定點擊事件到鄉鎮 GeoJSON 圖層
-            layer.on({
-              click: (e) =>
-                onLocationClick(townshipName, townshipCode, e.latlng, 'township', layer),
-            })
-          },
-        }) // 不加 .addTo(map) 這裡，由 updateBoundaryLayers 管理
-      }
-
-      // 6. 將處理好的資料更新到 Store
-      weatherStore.setLocationCoordsMap(processedLocationCoords)
-      // 數據載入成功後，觸發地圖圖層更新
+      // 直接呼叫這兩個函式來顯示標籤和邊界
       updateLocationLabels()
       updateBoundaryLayers()
     })
     .catch((error) => {
-      console.error('GeoJSON 載入失敗:', error)
-      // 可以在這裡顯示錯誤訊息給使用者
+      console.error('載入處理後的地理位置資料失敗:', error)
     })
 })
 
@@ -625,9 +502,9 @@ async function updateBoundaryLayers() {
     // 縣市邊界預設樣式
     fillColor: '#ADD8E6', // 淺藍色填充
     weight: 0,
-    opacity: 0,
+    opacity: 0.6,
     color: 'white', // 白色邊框
-    dashArray: '3',
+    dashArray: '5',
     fillOpacity: 0.6,
   })
 
@@ -641,35 +518,73 @@ async function updateBoundaryLayers() {
     fillOpacity: 0.6,
   })
 
-  if (currentZoom >= 14) {
-    // 移除所有行政區邊界圖層
-    if (countyGeoJsonLayer && map.hasLayer(countyGeoJsonLayer)) {
-      map.removeLayer(countyGeoJsonLayer)
-    }
-    if (townshipGeoJsonLayer && map.hasLayer(townshipGeoJsonLayer)) {
-      map.removeLayer(townshipGeoJsonLayer)
-    }
-  } else if (currentZoom >= 12) {
+  // 1. 根據縮放層級，決定要顯示哪個 GeoJSON 圖層
+  let geoJsonDataToDisplay = null
+  let geoJsonLayerToDisplay = null
+  let geoJsonStyle = null
+
+  if (currentZoom >= 12 && currentZoom < 14) {
     // 顯示鄉鎮邊界
-    if (countyGeoJsonLayer && map.hasLayer(countyGeoJsonLayer)) {
-      map.removeLayer(countyGeoJsonLayer) // 移除縣市圖層
+    if (!townshipGeoJsonData) {
+      try {
+        const response = await axios.get(
+          `${import.meta.env.BASE_URL}data/taiwan_townships_2024.geojson`,
+        )
+        townshipGeoJsonData = response.data
+        console.log('鄉鎮 GeoJSON 資料已載入。')
+      } catch (error) {
+        console.error('載入鄉鎮 GeoJSON 失敗:', error)
+        return
+      }
     }
-    if (townshipGeoJsonLayer && !map.hasLayer(townshipGeoJsonLayer)) {
-      townshipGeoJsonLayer = L.geoJSON(weatherStore.taiwanTownshipGeoJson, {
-        style: townshipStyle,
-        onEachFeature: onEachFeature,
-      }).addTo(map) // 添加鄉鎮圖層
-    }
-  } else {
+    geoJsonDataToDisplay = townshipGeoJsonData
+    geoJsonLayerToDisplay = townshipGeoJsonLayer
+    geoJsonStyle = townshipStyle
+  } else if (currentZoom < 12) {
     // 顯示縣市邊界
-    if (townshipGeoJsonLayer && map.hasLayer(townshipGeoJsonLayer)) {
-      map.removeLayer(townshipGeoJsonLayer) // 移除鄉鎮圖層
+    if (!countyGeoJsonData) {
+      try {
+        const response = await axios.get(
+          `${import.meta.env.BASE_URL}data/taiwan_cityships_2024.geojson`,
+        )
+        countyGeoJsonData = response.data
+        console.log('縣市 GeoJSON 資料已載入。')
+      } catch (error) {
+        console.error('載入縣市 GeoJSON 失敗:', error)
+        return
+      }
     }
-    if (countyGeoJsonLayer && !map.hasLayer(countyGeoJsonLayer)) {
-      countyGeoJsonLayer = L.geoJSON(weatherStore.taiwanCountyGeoJson, {
-        style: countyStyle,
+    geoJsonDataToDisplay = countyGeoJsonData
+    geoJsonLayerToDisplay = countyGeoJsonLayer
+    geoJsonStyle = countyStyle
+  }
+
+  // 2. 移除所有舊圖層
+  if (countyGeoJsonLayer && map.hasLayer(countyGeoJsonLayer)) {
+    map.removeLayer(countyGeoJsonLayer)
+  }
+  if (townshipGeoJsonLayer && map.hasLayer(townshipGeoJsonLayer)) {
+    map.removeLayer(townshipGeoJsonLayer)
+  }
+
+  // 3. 添加新的圖層
+  if (geoJsonDataToDisplay) {
+    if (geoJsonLayerToDisplay) {
+      // 如果圖層已經存在，重新添加到地圖
+      geoJsonLayerToDisplay.addTo(map)
+    } else {
+      // 如果圖層不存在，創建並添加到地圖
+      const newLayer = L.geoJSON(geoJsonDataToDisplay, {
+        style: geoJsonStyle,
         onEachFeature: onEachFeature,
-      }).addTo(map) // 添加縣市圖層
+      }).addTo(map)
+
+      // 儲存新創建的圖層實例
+      if (geoJsonDataToDisplay === countyGeoJsonData) {
+        countyGeoJsonLayer = newLayer
+      } else if (geoJsonDataToDisplay === townshipGeoJsonData) {
+        townshipGeoJsonLayer = newLayer
+      }
     }
   }
 }
@@ -677,7 +592,6 @@ async function updateBoundaryLayers() {
 // --- 更新地圖上的縣市/鄉鎮標籤 (此函式邏輯不變，因為它已經根據 zoom 篩選了 loc.type) ---
 async function updateLocationLabels() {
   const currentZoom = map.getZoom()
-  console.log('目前地圖縮放層級：', currentZoom)
   locationLabelsLayer.clearLayers() // 清除所有現有的標籤
 
   let locationsToDisplay = []
@@ -714,34 +628,30 @@ async function updateLocationLabels() {
   const placedMarkers = [] // [{x, y, marker, loc, weatherKey}]
   const minDistancePx = 52 // Minimum pixel distance between markers
   const markerRefs = {} // weatherKey -> marker
+
+  // 1. 同步生成所有 Marker，並給予初始「載入中」或快取狀態
   for (const loc of filteredLocationsForWeather) {
     const weatherKey = loc.name + (loc.county ? '-' + loc.county : '')
     const cachedWeather = weatherCache[weatherKey]
-    let labelContent
-    if (cachedWeather) {
-      // 已有天氣資料，直接顯示 icon/溫度
-      labelContent = `
-        <div class="p-1 rounded-md text-sm whitespace-nowrap flex flex-col items-center custom-marker" style="pointer-events: auto; cursor: pointer;">
-          <span class="ml-1 text-2xl">${cachedWeather.icon || '❓'}</span>
-          <span class="">${loc.name}</span>
-          <span class="ml-1">${cachedWeather.temp ?? 'N/A'}°C</span>
-        </div>
-      `
-    } else {
-      // 尚未有天氣資料，顯示 loading 狀態
-      labelContent = `
-        <div class="p-1 rounded-md text-sm whitespace-nowrap flex flex-col items-center custom-marker" style="pointer-events: auto; cursor: pointer;">
-          <span class="ml-1 text-2xl">⏳</span>
-          <span class="">${loc.name}</span>
-          <span class="ml-1">載入中</span>
-        </div>
-      `
-    }
+
+    // 判斷是否使用快取，決定初始顯示內容
+    const initialIcon = cachedWeather ? cachedWeather.icon : '⏳'
+    const initialTempContent = cachedWeather ? `${cachedWeather.temp}°C` : '載入中'
+
+    const labelContent = `
+      <div class="p-1 rounded-md text-sm whitespace-nowrap flex flex-col items-center custom-marker" style="pointer-events: auto; cursor: pointer;">
+        <span class="ml-1 text-2xl">${initialIcon}</span>
+        <span class="">${loc.name}</span>
+        <span class="ml-1">${initialTempContent}</span>
+      </div>
+    `
+
     const customIcon = L.divIcon({
       className: 'custom-div-icon',
       html: labelContent,
       iconAnchor: [0, 0],
     })
+
     // Smart placement: try offset if too close to previous markers
     let latlng = L.latLng(loc.lat, loc.lon)
     let point = map.latLngToLayerPoint(latlng)
@@ -758,6 +668,7 @@ async function updateLocationLabels() {
       [-40, 0],
       [0, -40],
     ]
+
     while (offsetAttempts < offsetPx.length && !foundSpot) {
       let testPoint = L.point(
         point.x + offsetPx[offsetAttempts][0],
@@ -775,6 +686,7 @@ async function updateLocationLabels() {
         offsetAttempts++
       }
     }
+
     // 轉回地理座標
     const finalLatLng = map.layerPointToLatLng(point)
     const marker = L.marker(finalLatLng, { icon: customIcon })
@@ -784,35 +696,44 @@ async function updateLocationLabels() {
     markerRefs[weatherKey] = marker
   }
 
-  // 批量獲取篩選後地點的當前天氣數據（非同步，回來後再更新 marker icon）
-  const weatherResults = await weatherStore.fetchMultipleLocationWeather(
-    Object.fromEntries(
-      filteredLocationsForWeather.map((loc) => [
-        loc.name + (loc.county ? '-' + loc.county : ''),
-        loc,
-      ]),
-    ),
+  // 2. 移除 await，讓天氣請求在背景執行，不阻塞介面
+  const locationsForRequest = Object.fromEntries(
+    filteredLocationsForWeather.map((loc) => [
+      loc.name + (loc.county ? '-' + loc.county : ''),
+      loc,
+    ]),
   )
 
-  // 更新 marker icon/溫度，並寫入 cache
-  for (const pm of placedMarkers) {
-    const weather = weatherResults[pm.weatherKey]
-    if (weather) weatherCache[pm.weatherKey] = weather
-    const labelContent = `
-      <div class="p-1 rounded-md text-sm whitespace-nowrap flex flex-col items-center custom-marker" style="pointer-events: auto; cursor: pointer;">
-        <span class="ml-1 text-2xl">${weather ? weather.icon : '❓'}</span>
-        <span class="">${pm.loc.name}</span>
-        <span class="ml-1">${weather ? weather.temp : 'N/A'}°C</span>
-      </div>
-    `
-    pm.marker.setIcon(
-      L.divIcon({
-        className: 'custom-div-icon',
-        html: labelContent,
-        iconAnchor: [0, 0],
-      }),
-    )
-  }
+  weatherStore
+    .fetchMultipleLocationWeather(locationsForRequest)
+    .then((weatherResults) => {
+      // 3. 請求完成後，動態更新 Marker 內容
+      for (const pm of placedMarkers) {
+        const weather = weatherResults[pm.weatherKey]
+        if (weather) {
+          weatherCache[pm.weatherKey] = weather // 寫入快取
+
+          // 動態更新 Marker 的 HTML 內容
+          const updatedLabelContent = `
+            <div class="p-1 rounded-md text-sm whitespace-nowrap flex flex-col items-center custom-marker" style="pointer-events: auto; cursor: pointer;">
+              <span class="ml-1 text-2xl">${weather.icon}</span>
+              <span>${pm.loc.name}</span>
+              <span class="ml-1">${weather.temp}°C</span>
+            </div>
+          `
+          pm.marker.setIcon(
+            L.divIcon({
+              className: 'custom-div-icon',
+              html: updatedLabelContent,
+              iconAnchor: [0, 0],
+            }),
+          )
+        }
+      }
+    })
+    .catch((error) => {
+      console.error('天氣資料載入失敗:', error)
+    })
 }
 
 // --- 點擊行政區/露營地 Marker 事件處理 ---
